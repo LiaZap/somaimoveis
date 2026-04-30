@@ -129,6 +129,7 @@ function ContratosContent() {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [activeTab, setActiveTab] = useState("todos");
   const [guaranteeFilter, setGuaranteeFilter] = useState("all");
   const [formOpen, setFormOpen] = useState(false);
@@ -140,14 +141,41 @@ function ContratosContent() {
   const [importOpen, setImportOpen] = useState(false);
   const [importContractPdfOpen, setImportContractPdfOpen] = useState(false);
   const [openCtxMenu, CtxMenuPortal] = useContextMenu();
+  // Paginacao server-side
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalEntries, setTotalEntries] = useState(0);
+  const [stats, setStats] = useState({
+    totalContracts: 0,
+    activeContracts: 0,
+    totalMonthlyValue: 0,
+    expiringIn30Days: 0,
+  });
+
+  function tabToStatus(tab: string): string | null {
+    if (tab === "ativos") return "ATIVO";
+    if (tab === "encerrados") return "ENCERRADO";
+    if (tab === "renovacao") return "PENDENTE_RENOVACAO";
+    return null;
+  }
 
   async function fetchContracts() {
     setLoading(true);
     try {
-      const response = await fetch("/api/contracts");
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("limit", String(PAGE_SIZE));
+      const status = tabToStatus(activeTab);
+      if (status) params.set("status", status);
+      if (guaranteeFilter !== "all") params.set("guaranteeType", guaranteeFilter);
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      const response = await fetch(`/api/contracts?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
-        setContracts(data);
+        setContracts(data.data || []);
+        setTotalPages(data.pagination?.totalPages || 1);
+        setTotalEntries(data.pagination?.total || 0);
       }
     } catch (error) {
       console.error("Erro ao buscar contratos:", error);
@@ -157,9 +185,44 @@ function ContratosContent() {
     }
   }
 
+  async function fetchStats() {
+    try {
+      const res = await fetch("/api/contracts/stats");
+      if (res.ok) {
+        const data = await res.json();
+        setStats({
+          totalContracts: data.totalContracts || 0,
+          activeContracts: data.activeContracts || 0,
+          totalMonthlyValue: data.totalMonthlyValue || 0,
+          expiringIn30Days: data.expiringIn30Days || 0,
+        });
+      }
+    } catch (error) {
+      console.error("Erro ao buscar stats:", error);
+    }
+  }
+
+  async function refresh() {
+    await Promise.all([fetchContracts(), fetchStats()]);
+  }
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [activeTab, guaranteeFilter, debouncedSearch]);
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
   useEffect(() => {
     fetchContracts();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, activeTab, guaranteeFilter, debouncedSearch]);
 
   useEffect(() => {
     if (searchParams.get("novo") === "true") {
@@ -169,57 +232,9 @@ function ContratosContent() {
     }
   }, [searchParams, router]);
 
-  // Mostra TODOS os contratos por padrao (qualquer type/codigo).
-  // Antes filtravamos so LOCACAO ou que comecava com 'CTR-' — isso fazia
-  // sumir contratos importados de outras plataformas com codigo diferente.
-  const mainContracts = contracts;
-
-  // Client-side filtering by status tab
-  const filteredByStatus = mainContracts.filter((contract) => {
-    if (activeTab === "todos") return true;
-    if (activeTab === "ativos") return contract.status === "ATIVO";
-    if (activeTab === "encerrados") return contract.status === "ENCERRADO";
-    if (activeTab === "renovacao") return contract.status === "PENDENTE_RENOVACAO";
-    return true;
-  });
-
-  // Client-side filter by guarantee type
-  const filteredByGuarantee = filteredByStatus.filter((contract) => {
-    if (guaranteeFilter === "all") return true;
-    const g = (contract.guaranteeType || "").toUpperCase();
-    if (guaranteeFilter === "SEGURO_FIANCA") return g === "SEGURO_FIANCA";
-    if (guaranteeFilter === "FIADOR") return g === "FIADOR";
-    if (guaranteeFilter === "CAUCAO") return g === "CAUCAO";
-    if (guaranteeFilter === "TITULO_CAPITALIZACAO") return g === "TITULO_CAPITALIZACAO";
-    if (guaranteeFilter === "SEM_GARANTIA") return !g || g === "SEM_GARANTIA";
-    return true;
-  });
-
-  // Client-side search
-  const filteredContracts = filteredByGuarantee.filter((contract) => {
-    if (!search) return true;
-    const term = search.toLowerCase();
-    return (
-      contract.code.toLowerCase().includes(term) ||
-      (contract.property?.title || "").toLowerCase().includes(term) ||
-      (contract.tenant?.name || "").toLowerCase().includes(term) ||
-      (contract.owner?.name || "").toLowerCase().includes(term)
-    );
-  });
-
-  // Stats (only LOCACAO contracts)
-  const totalContracts = mainContracts.length;
-  const activeContracts = mainContracts.filter((c) => c.status === "ATIVO").length;
-  const totalMonthlyValue = mainContracts
-    .filter((c) => c.status === "ATIVO")
-    .reduce((sum, c) => sum + c.rentalValue, 0);
-  const now = new Date();
-  const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-  const expiringIn30Days = contracts.filter((c) => {
-    if (c.status !== "ATIVO") return false;
-    const endDate = new Date(c.endDate);
-    return endDate >= now && endDate <= in30Days;
-  }).length;
+  // Servidor ja filtrou — `contracts` ja sao as linhas da pagina atual
+  const filteredContracts = contracts;
+  const { totalContracts, activeContracts, totalMonthlyValue, expiringIn30Days } = stats;
 
   function handleNewContract() {
     setSelectedContract(undefined);
@@ -247,7 +262,7 @@ function ContratosContent() {
         toast.error(error.error || "Erro ao excluir contrato");
         return;
       }
-      fetchContracts();
+      refresh();
     } catch (error) {
       toast.error("Erro ao excluir contrato");
     } finally {
@@ -257,7 +272,7 @@ function ContratosContent() {
   }
 
   function handleFormSuccess() {
-    fetchContracts();
+    refresh();
   }
 
   return (
@@ -560,6 +575,22 @@ function ContratosContent() {
               </div>
               </>
             )}
+
+            {/* Paginacao */}
+            {totalEntries > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-t flex-wrap">
+                <p className="text-xs text-muted-foreground">
+                  Mostrando {Math.min((page - 1) * PAGE_SIZE + 1, totalEntries)}-{Math.min(page * PAGE_SIZE, totalEntries)} de {totalEntries.toLocaleString("pt-BR")}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage(1)}>Primeira</Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage((p) => Math.max(1, p - 1))}>Anterior</Button>
+                  <span className="text-xs text-muted-foreground px-2">Pagina {page} de {totalPages}</span>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Proxima</Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage(totalPages)}>Ultima</Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -598,14 +629,14 @@ function ContratosContent() {
       <UploadPdf
         open={uploadOpen}
         onOpenChange={setUploadOpen}
-        onSuccess={() => fetchContracts()}
+        onSuccess={() => refresh()}
       />
 
       {/* Batch Upload PDF Dialog */}
       <BatchUploadPdf
         open={batchUploadOpen}
         onOpenChange={setBatchUploadOpen}
-        onSuccess={() => fetchContracts()}
+        onSuccess={() => refresh()}
       />
 
       {/* Import Spreadsheet Dialog */}
@@ -613,14 +644,14 @@ function ContratosContent() {
         entityType="contracts"
         open={importOpen}
         onOpenChange={setImportOpen}
-        onSuccess={() => fetchContracts()}
+        onSuccess={() => refresh()}
       />
 
       {/* Import Contract PDFs Dialog */}
       <ImportContractPdf
         open={importContractPdfOpen}
         onOpenChange={setImportContractPdfOpen}
-        onSuccess={() => fetchContracts()}
+        onSuccess={() => refresh()}
       />
 
       <CtxMenuPortal />

@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
       { street: { contains: search } },
       { neighborhood: { contains: search } },
       { city: { contains: search } },
+      { owner: { name: { contains: search } } },
     ];
   }
 

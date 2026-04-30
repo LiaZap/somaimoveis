@@ -13,15 +13,34 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get("search");
 
     const tenantId = searchParams.get("tenantId");
+    const guaranteeType = searchParams.get("guaranteeType");
     const where: Record<string, unknown> = {};
     if (status && status !== "all") where.status = status;
     if (tenantId) where.tenantId = tenantId;
+    if (guaranteeType && guaranteeType !== "all") {
+      if (guaranteeType === "SEM_GARANTIA") {
+        where.OR = [{ guaranteeType: null }, { guaranteeType: "" }, { guaranteeType: "SEM_GARANTIA" }];
+      } else {
+        where.guaranteeType = guaranteeType;
+      }
+    }
     if (search) {
-      where.OR = [
+      const searchClause = [
         { code: { contains: search } },
         { tenant: { name: { contains: search } } },
         { property: { title: { contains: search } } },
+        { owner: { name: { contains: search } } },
       ];
+      if (where.OR) {
+        // Combina filtro de garantia + search com AND
+        where.AND = [
+          { OR: where.OR },
+          { OR: searchClause },
+        ];
+        delete where.OR;
+      } else {
+        where.OR = searchClause;
+      }
     }
 
     const includeRelations = {

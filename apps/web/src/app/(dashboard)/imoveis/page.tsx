@@ -124,8 +124,19 @@ function ImoveisContent() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  // Paginacao server-side
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalEntries, setTotalEntries] = useState(0);
+  const [stats, setStats] = useState({
+    totalProperties: 0,
+    availableProperties: 0,
+    rentedProperties: 0,
+  });
 
   // Form dialog state
   const [formOpen, setFormOpen] = useState(false);
@@ -141,17 +152,58 @@ function ImoveisContent() {
   const fetchProperties = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/properties");
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("limit", String(PAGE_SIZE));
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      if (typeFilter !== "all") params.set("type", typeFilter);
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      const response = await fetch(`/api/properties?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
-        setProperties(data);
+        setProperties(data.data || []);
+        setTotalPages(data.pagination?.totalPages || 1);
+        setTotalEntries(data.pagination?.total || 0);
       }
     } catch (error) {
       console.error("Erro ao carregar imoveis:", error);
     } finally {
       setLoading(false);
     }
+  }, [page, statusFilter, typeFilter, debouncedSearch]);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch("/api/properties/stats");
+      if (res.ok) {
+        const data = await res.json();
+        setStats({
+          totalProperties: data.totalProperties || 0,
+          availableProperties: data.availableProperties || 0,
+          rentedProperties: data.rentedProperties || 0,
+        });
+      }
+    } catch (error) {
+      console.error("Erro ao buscar stats:", error);
+    }
   }, []);
+
+  const refresh = useCallback(async () => {
+    await Promise.all([fetchProperties(), fetchStats()]);
+  }, [fetchProperties, fetchStats]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter, typeFilter]);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
 
   useEffect(() => {
     fetchProperties();
@@ -165,37 +217,9 @@ function ImoveisContent() {
     }
   }, [searchParams, router]);
 
-  // Client-side filtering
-  const filteredProperties = useMemo(() => {
-    return properties.filter((p) => {
-      // Search filter
-      if (search) {
-        const searchLower = search.toLowerCase();
-        const matchesSearch =
-          p.title.toLowerCase().includes(searchLower) ||
-          p.street.toLowerCase().includes(searchLower) ||
-          p.neighborhood.toLowerCase().includes(searchLower) ||
-          p.city.toLowerCase().includes(searchLower) ||
-          (p.state || "").toLowerCase().includes(searchLower) ||
-          (p.zipCode || "").includes(searchLower) ||
-          (p.owner?.name?.toLowerCase().includes(searchLower) ?? false);
-        if (!matchesSearch) return false;
-      }
-
-      // Status filter
-      if (statusFilter !== "all" && p.status !== statusFilter) return false;
-
-      // Type filter
-      if (typeFilter !== "all" && p.type !== typeFilter) return false;
-
-      return true;
-    });
-  }, [properties, search, statusFilter, typeFilter]);
-
-  // Stats
-  const totalProperties = properties.length;
-  const availableProperties = properties.filter((p) => p.status === "DISPONIVEL").length;
-  const rentedProperties = properties.filter((p) => p.status === "ALUGADO").length;
+  // Servidor ja filtrou — `properties` ja sao as linhas da pagina atual
+  const filteredProperties = properties;
+  const { totalProperties, availableProperties, rentedProperties } = stats;
 
   function handleNewProperty() {
     setEditingProperty(undefined);
@@ -226,7 +250,7 @@ function ImoveisContent() {
       toast.success("Imóvel excluído com sucesso");
       setDeleteDialogOpen(false);
       setDeletingProperty(null);
-      fetchProperties();
+      refresh();
     } catch (error: any) {
       toast.error(error.message || "Erro ao excluir imovel");
     } finally {
@@ -235,7 +259,7 @@ function ImoveisContent() {
   }
 
   function handleFormSuccess() {
-    fetchProperties();
+    refresh();
   }
 
   return (
@@ -525,6 +549,22 @@ function ImoveisContent() {
             })}
           </div>
         )}
+
+        {/* Paginacao */}
+        {totalEntries > PAGE_SIZE && (
+          <div className="flex items-center justify-between gap-2 px-1 py-3 border-t flex-wrap">
+            <p className="text-xs text-muted-foreground">
+              Mostrando {Math.min((page - 1) * PAGE_SIZE + 1, totalEntries)}-{Math.min(page * PAGE_SIZE, totalEntries)} de {totalEntries.toLocaleString("pt-BR")}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage(1)}>Primeira</Button>
+              <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage((p) => Math.max(1, p - 1))}>Anterior</Button>
+              <span className="text-xs text-muted-foreground px-2">Pagina {page} de {totalPages}</span>
+              <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Proxima</Button>
+              <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage(totalPages)}>Ultima</Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Property Form Dialog */}
@@ -565,7 +605,7 @@ function ImoveisContent() {
         entityType="properties"
         open={importOpen}
         onOpenChange={setImportOpen}
-        onSuccess={() => fetchProperties()}
+        onSuccess={() => refresh()}
       />
 
       <CtxMenuPortal />
