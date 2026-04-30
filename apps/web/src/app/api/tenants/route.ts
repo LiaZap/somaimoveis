@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
 import { logAudit } from "@/lib/audit-log";
+import { buildSearchWhere } from "@/lib/search";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
@@ -13,16 +14,15 @@ export async function GET(request: NextRequest) {
   const isNumericSearch = !!search && searchDigits.length >= 3;
 
   const where: Record<string, unknown> = includeInactive ? {} : { active: true };
-  if (search) {
-    const orClauses: any[] = [
-      { name: { contains: search } },
-      { email: { contains: search } },
-      { cpfCnpj: { contains: search } },
-    ];
-    if (searchDigits && searchDigits !== search) {
-      orClauses.push({ cpfCnpj: { contains: searchDigits } });
-    }
-    where.OR = orClauses;
+
+  // Busca tokenizada: cada palavra precisa estar em algum campo.
+  const searchWhere = buildSearchWhere(
+    search,
+    ["name", "email", "phone", "cpfCnpj"],
+    { numericFields: ["cpfCnpj", "phone"] },
+  );
+  if (searchWhere) {
+    where.AND = [...((where.AND as any[]) || []), ...searchWhere];
   }
 
   const includeRelations = {

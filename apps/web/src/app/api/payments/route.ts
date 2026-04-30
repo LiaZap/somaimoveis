@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
+import { buildSearchWhere } from "@/lib/search";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
@@ -20,15 +21,28 @@ export async function GET(request: NextRequest) {
   const where: Record<string, unknown> = {};
   if (status && status !== "all") where.status = status;
   if (contractId) where.contractId = contractId;
-  if (search) {
-    where.OR = [
-      { code: { contains: search } },
-      { tenant: { name: { contains: search } } },
-      { owner: { name: { contains: search } } },
-      { description: { contains: search } },
-      { contract: { code: { contains: search } } },
-      { contract: { property: { title: { contains: search } } } },
-    ];
+
+  // Busca tokenizada: cada palavra do termo precisa estar presente em algum campo.
+  // Ex: "Maria Silva" → encontra "Maria Aparecida Silva" e "Silva, Maria Joana".
+  const searchWhere = buildSearchWhere(
+    search,
+    [
+      "code",
+      "description",
+      "nossoNumero",
+      "tenant.name",
+      "tenant.cpfCnpj",
+      "owner.name",
+      "owner.cpfCnpj",
+      "contract.code",
+      "contract.property.title",
+    ],
+    {
+      numericFields: ["tenant.cpfCnpj", "owner.cpfCnpj", "nossoNumero"],
+    },
+  );
+  if (searchWhere) {
+    where.AND = [...((where.AND as any[]) || []), ...searchWhere];
   }
 
   // Filtro por aba (status especiais)

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
 import { logAudit } from "@/lib/audit-log";
+import { buildSearchWhere } from "@/lib/search";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
@@ -24,22 +25,28 @@ export async function GET(request: NextRequest) {
         where.guaranteeType = guaranteeType;
       }
     }
-    if (search) {
-      const searchClause = [
-        { code: { contains: search } },
-        { tenant: { name: { contains: search } } },
-        { property: { title: { contains: search } } },
-        { owner: { name: { contains: search } } },
-      ];
-      if (where.OR) {
-        // Combina filtro de garantia + search com AND
-        where.AND = [
-          { OR: where.OR },
-          { OR: searchClause },
-        ];
+    const searchWhere = buildSearchWhere(
+      search,
+      [
+        "code",
+        "tenant.name",
+        "tenant.cpfCnpj",
+        "owner.name",
+        "owner.cpfCnpj",
+        "property.title",
+        "property.street",
+        "property.neighborhood",
+      ],
+      { numericFields: ["tenant.cpfCnpj", "owner.cpfCnpj"] },
+    );
+    if (searchWhere) {
+      // Combina com filtro de garantia (que ja pode estar em where.OR)
+      const existingOR = where.OR;
+      if (existingOR) {
+        where.AND = [...((where.AND as any[]) || []), { OR: existingOR }, ...searchWhere];
         delete where.OR;
       } else {
-        where.OR = searchClause;
+        where.AND = [...((where.AND as any[]) || []), ...searchWhere];
       }
     }
 

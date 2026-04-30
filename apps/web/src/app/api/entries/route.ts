@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { buildSearchWhere } from "@/lib/search";
 
 /**
  * Unified GET endpoint for tenant + owner entries used by /lancamentos page.
@@ -38,15 +39,24 @@ export async function GET(request: NextRequest) {
     tenantWhere.status = status;
     ownerWhere.status = status;
   }
-  if (search) {
-    tenantWhere.OR = [
-      { description: { contains: search } },
-      { tenant: { name: { contains: search } } },
-    ];
-    ownerWhere.OR = [
-      { description: { contains: search } },
-      { owner: { name: { contains: search } } },
-    ];
+  // Busca tokenizada em ambos lados.
+  const tenantSearch = buildSearchWhere(search, [
+    "description",
+    "category",
+    "tenant.name",
+    "tenant.cpfCnpj",
+  ]);
+  if (tenantSearch) {
+    tenantWhere.AND = [...((tenantWhere.AND as any[]) || []), ...tenantSearch];
+  }
+  const ownerSearch = buildSearchWhere(search, [
+    "description",
+    "category",
+    "owner.name",
+    "owner.cpfCnpj",
+  ]);
+  if (ownerSearch) {
+    ownerWhere.AND = [...((ownerWhere.AND as any[]) || []), ...ownerSearch];
   }
 
   const includeTenant = !["proprietario"].includes(source);

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -291,7 +291,7 @@ function FinanceiroContent() {
     setPage(1);
   }, [activeTab, debouncedSearch, dateField, dateFrom, dateTo]);
 
-  // Stats iniciais (sem dependencia de filtros â€” mostra totalizadores globais)
+  // Stats iniciais (sem dependencia de filtros �?? mostra totalizadores globais)
   useEffect(() => {
     fetchStats();
   }, []);
@@ -310,10 +310,10 @@ function FinanceiroContent() {
     }
   }, [searchParams, router]);
 
-  // Stats vem do servidor (server-side) â€” ja filtrados/agregados.
+  // Stats vem do servidor (server-side) �?? ja filtrados/agregados.
   const { totalFaturamento, totalAReceber, totalEmAtraso, recebidoEsteMes } = stats;
 
-  // Helper: pagamento estÃ¡ atrasado (PENDENTE com vencimento passado)
+  // Helper: pagamento está atrasado (PENDENTE com vencimento passado)
   // Mantido para badges visuais nas linhas individuais.
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -327,7 +327,7 @@ function FinanceiroContent() {
     return false;
   };
 
-  // Servidor ja aplicou filtros/busca/aba â€” `payments` ja sao as linhas da pagina atual
+  // Servidor ja aplicou filtros/busca/aba �?? `payments` ja sao as linhas da pagina atual
   const filteredPayments = payments;
 
   function handleNewPayment() {
@@ -449,7 +449,7 @@ function FinanceiroContent() {
   const [batchNotifyLoading, setBatchNotifyLoading] = useState(false);
 
   const handleSendNotifyBatch = async () => {
-    if (!confirm("Enviar cobranÃ§as (WhatsApp + Email) para todos os boletos emitidos que ainda nÃ£o foram notificados?")) return;
+    if (!confirm("Enviar cobranças (WhatsApp + Email) para todos os boletos emitidos que ainda não foram notificados?")) return;
     setBatchNotifyLoading(true);
     try {
       const res = await fetch("/api/payments/notify/batch", {
@@ -458,7 +458,7 @@ function FinanceiroContent() {
         body: JSON.stringify({}),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || `Erro ao enviar cobranÃ§as (${res.status})`);
+      if (!res.ok) throw new Error(data?.error || `Erro ao enviar cobranças (${res.status})`);
       toast.success(data.message, { duration: 10000 });
 
       // Poll progress if processing in background
@@ -470,7 +470,7 @@ function FinanceiroContent() {
             if (progress.done) {
               clearInterval(pollInterval);
               setBatchNotifyLoading(false);
-              toast.success(`Envio concluÃ­do: ${progress.sent} enviado(s), ${progress.failed} falha(s)`, { duration: 15000 });
+              toast.success(`Envio concluído: ${progress.sent} enviado(s), ${progress.failed} falha(s)`, { duration: 15000 });
               if (progress.errors?.length > 0) {
                 for (const e of progress.errors) {
                   toast.error(`${e.code}: ${e.error}`, { duration: 15000 });
@@ -486,7 +486,7 @@ function FinanceiroContent() {
         setBatchNotifyLoading(false);
       }
     } catch (err: any) {
-      toast.error(err.message || "Erro ao enviar cobranÃ§as em lote", { duration: 15000 });
+      toast.error(err.message || "Erro ao enviar cobranças em lote", { duration: 15000 });
       setBatchNotifyLoading(false);
     }
   };
@@ -500,7 +500,7 @@ function FinanceiroContent() {
         body: JSON.stringify({ channels }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || `Erro ao enviar cobranÃ§a (${res.status})`);
+      if (!res.ok) throw new Error(data?.error || `Erro ao enviar cobrança (${res.status})`);
       const successResults = data.results?.filter((r: any) => r.success) || [];
       const failResults = data.results?.filter((r: any) => !r.success) || [];
       if (successResults.length > 0) {
@@ -575,7 +575,7 @@ function FinanceiroContent() {
                   <div className="flex items-center gap-1 mt-1">
                     <ArrowDownRight className="h-3.5 w-3.5 text-red-500" />
                     <span className="text-xs text-red-500 font-medium">
-                      {payments.filter((p) => isOverdue(p)).length} cobranÃ§a(s) atrasada(s)
+                      {payments.filter((p) => isOverdue(p)).length} cobrança(s) atrasada(s)
                     </span>
                   </div>
                 </div>
@@ -595,7 +595,7 @@ function FinanceiroContent() {
                     {loading ? "..." : formatCurrency(recebidoEsteMes)}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {recebidoEsteMes > 0 ? "este mes" : "—"}
+                    {recebidoEsteMes > 0 ? "este mes" : "?"}
                   </p>
                 </div>
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100">
@@ -615,7 +615,7 @@ function FinanceiroContent() {
                   <TabsList className="h-9 sm:h-8">
                     <TabsTrigger value="todos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Todos</TabsTrigger>
                     <TabsTrigger value="pendentes" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Pendentes</TabsTrigger>
-                    <TabsTrigger value="nao_emitidos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">NÃ£o Emitidos</TabsTrigger>
+                    <TabsTrigger value="nao_emitidos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Não Emitidos</TabsTrigger>
                     <TabsTrigger value="emitidos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Emitidos</TabsTrigger>
                     <TabsTrigger value="pagos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Pagos</TabsTrigger>
                     <TabsTrigger value="atrasados" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Atrasados</TabsTrigger>
@@ -637,7 +637,7 @@ function FinanceiroContent() {
                     <span>Enviando...</span>
                   ) : (
                     <>
-                      <span className="hidden sm:inline">Enviar CobranÃ§as</span>
+                      <span className="hidden sm:inline">Enviar Cobranças</span>
                       <span className="sm:hidden">Cobrar</span>
                     </>
                   )}
@@ -701,7 +701,7 @@ function FinanceiroContent() {
                     setMonthShortcut("");
                   }}
                   className="h-10 sm:h-8 w-[140px] text-xs"
-                  placeholder="AtÃ©"
+                  placeholder="Até"
                   title="Data final"
                 />
                 {(dateFrom || dateTo) && (
@@ -843,7 +843,7 @@ function FinanceiroContent() {
                           )}
                           {breakdown && (breakdown.debitos ?? 0) > 0 && (
                             <Badge variant="outline" className="text-[10px] h-5 border gap-1 bg-red-50 text-red-700 border-red-200">
-                              +DÃ©b
+                              +Déb
                             </Badge>
                           )}
                           <span className="text-xs text-muted-foreground">Venc: {formatDate(payment.dueDate)}</span>
@@ -858,8 +858,8 @@ function FinanceiroContent() {
                             {breakdown.iptu > 0 ? ` + IPTU: ${formatCurrency(breakdown.iptu)}` : ""}
                             {(breakdown.seguroFianca ?? 0) > 0 ? ` + Seguro: ${formatCurrency(breakdown.seguroFianca!)}` : ""}
                             {(breakdown.taxaBancaria ?? 0) > 0 ? ` + Tx Banc: ${formatCurrency(breakdown.taxaBancaria!)}` : ""}
-                            {(breakdown.debitos ?? 0) > 0 ? ` + DÃ©b: ${formatCurrency(breakdown.debitos!)}` : ""}
-                            {(breakdown.creditos ?? breakdown.desconto ?? 0) > 0 ? ` - CrÃ©d: ${formatCurrency((breakdown.creditos ?? breakdown.desconto)!)}` : ""}
+                            {(breakdown.debitos ?? 0) > 0 ? ` + Déb: ${formatCurrency(breakdown.debitos!)}` : ""}
+                            {(breakdown.creditos ?? breakdown.desconto ?? 0) > 0 ? ` - Créd: ${formatCurrency((breakdown.creditos ?? breakdown.desconto)!)}` : ""}
                           </p>
                           {breakdown.lancamentos && breakdown.lancamentos.length > 0 && (
                             <p className="text-[10px] text-muted-foreground/70">
@@ -928,15 +928,15 @@ function FinanceiroContent() {
               <Table className="table-fixed w-full">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-xs w-[75px]">CÃ³digo</TableHead>
+                    <TableHead className="text-xs w-[75px]">Código</TableHead>
                     <TableHead className="text-xs w-[65px]">Contrato</TableHead>
-                    <TableHead className="text-xs w-[110px]">LocatÃ¡rio</TableHead>
+                    <TableHead className="text-xs w-[110px]">Locatário</TableHead>
                     <TableHead className="text-xs text-right w-[85px]">Valor</TableHead>
-                    <TableHead className="text-xs w-[130px]">ComposiÃ§Ã£o</TableHead>
+                    <TableHead className="text-xs w-[130px]">Composição</TableHead>
                     <TableHead className="text-xs w-[80px]">Vencimento</TableHead>
                     <TableHead className="text-xs w-[80px]">Pagamento</TableHead>
                     <TableHead className="text-xs w-[110px]">Status</TableHead>
-                    <TableHead className="text-xs w-[90px]">NÂº Boleto</TableHead>
+                    <TableHead className="text-xs w-[90px]">Nº Boleto</TableHead>
                     <TableHead className="text-xs w-[60px]">Metodo</TableHead>
                     <TableHead className="text-xs w-[120px]">Boleto</TableHead>
                     <TableHead className="text-xs w-[65px]">Envio</TableHead>
@@ -977,28 +977,28 @@ function FinanceiroContent() {
                                         <span className="text-[10px] text-muted-foreground">+ Tx Banc: {formatCurrency(breakdown.taxaBancaria!)}</span>
                                       )}
                                       {(breakdown.debitos ?? 0) > 0 && (
-                                        <span className="text-[10px] text-red-600">+ DÃ©b: {formatCurrency(breakdown.debitos!)}</span>
+                                        <span className="text-[10px] text-red-600">+ Déb: {formatCurrency(breakdown.debitos!)}</span>
                                       )}
                                       {(breakdown.creditos ?? breakdown.desconto ?? 0) > 0 && (
-                                        <span className="text-[10px] text-green-600">- CrÃ©d: {formatCurrency((breakdown.creditos ?? breakdown.desconto)!)}</span>
+                                        <span className="text-[10px] text-green-600">- Créd: {formatCurrency((breakdown.creditos ?? breakdown.desconto)!)}</span>
                                       )}
                                     </div>
                                   </div>
                                 </TooltipTrigger>
                                 <TooltipContent side="bottom" className="max-w-sm text-xs space-y-1 p-3">
-                                  <p className="font-medium border-b pb-1 mb-1">ComposiÃ§Ã£o do Valor</p>
+                                  <p className="font-medium border-b pb-1 mb-1">Composição do Valor</p>
                                   {breakdown.isProrata ? (
                                     <p>Aluguel: {formatCurrency(breakdown.aluguel)} <span className="text-muted-foreground">({breakdown.prorataDias}/30 dias - original: {formatCurrency(breakdown.aluguelOriginal!)})</span></p>
                                   ) : (
                                     <p>Aluguel: {formatCurrency(breakdown.aluguel)}</p>
                                   )}
-                                  {breakdown.condominio > 0 && <p className="text-orange-600">+ CondomÃ­nio: {formatCurrency(breakdown.condominio)}</p>}
+                                  {breakdown.condominio > 0 && <p className="text-orange-600">+ Condomínio: {formatCurrency(breakdown.condominio)}</p>}
                                   {breakdown.iptu > 0 && <p className="text-purple-600">+ IPTU: {formatCurrency(breakdown.iptu)}</p>}
-                                  {(breakdown.seguroFianca ?? 0) > 0 && <p className="text-cyan-600">+ Seguro FianÃ§a: {formatCurrency(breakdown.seguroFianca!)}</p>}
-                                  {(breakdown.taxaBancaria ?? 0) > 0 && <p>+ Taxa BancÃ¡ria: {formatCurrency(breakdown.taxaBancaria!)}</p>}
+                                  {(breakdown.seguroFianca ?? 0) > 0 && <p className="text-cyan-600">+ Seguro Fiança: {formatCurrency(breakdown.seguroFianca!)}</p>}
+                                  {(breakdown.taxaBancaria ?? 0) > 0 && <p>+ Taxa Bancária: {formatCurrency(breakdown.taxaBancaria!)}</p>}
                                   {breakdown.lancamentos && breakdown.lancamentos.length > 0 && (
                                     <>
-                                      <p className="font-medium border-t pt-1 mt-1">LanÃ§amentos</p>
+                                      <p className="font-medium border-t pt-1 mt-1">Lançamentos</p>
                                       {breakdown.lancamentos.map((l, i) => (
                                         <p key={i} className={l.tipo === "CREDITO" ? "text-green-600" : "text-red-600"}>
                                           {l.tipo === "CREDITO" ? "(-) " : "(+) "}{l.descricao}: {formatCurrency(l.valor)}
@@ -1027,7 +1027,7 @@ function FinanceiroContent() {
                               {status.label}
                             </Badge>
                             {payment.boletoStatus && (() => {
-                              // Extrair tipo de liquidaÃ§Ã£o do description (ex: "Sicredi: PIX | ...")
+                              // Extrair tipo de liquidação do description (ex: "Sicredi: PIX | ...")
                               let tipoLabel = payment.boletoStatus;
                               if (payment.description && payment.description.startsWith("Sicredi:")) {
                                 const tipo = payment.description.split("|")[0].replace("Sicredi:", "").trim();

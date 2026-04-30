@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { buildSearchWhere } from "@/lib/search";
 
 /**
  * Aggregated totals for the lancamentos summary cards.
@@ -28,13 +29,12 @@ export async function GET(request: NextRequest) {
     // For totals we ignore CANCELADO
     if (status && status !== "todos") where.status = status;
     else where.status = { not: "CANCELADO" };
-    if (search) {
-      where.OR = [
-        { description: { contains: search } },
-        target === "tenant"
-          ? { tenant: { name: { contains: search } } }
-          : { owner: { name: { contains: search } } },
-      ];
+    const fields = target === "tenant"
+      ? ["description", "category", "tenant.name", "tenant.cpfCnpj"]
+      : ["description", "category", "owner.name", "owner.cpfCnpj"];
+    const searchWhere = buildSearchWhere(search, fields);
+    if (searchWhere) {
+      where.AND = [...((where.AND as any[]) || []), ...searchWhere];
     }
     return where;
   }

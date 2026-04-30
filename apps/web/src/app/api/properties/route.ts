@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
 import { logAudit } from "@/lib/audit-log";
+import { buildSearchWhere } from "@/lib/search";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
@@ -15,14 +16,19 @@ export async function GET(request: NextRequest) {
   const where: Record<string, unknown> = includeInactive ? {} : { active: true };
   if (status && status !== "all") where.status = status;
   if (type && type !== "all") where.type = type;
-  if (search) {
-    where.OR = [
-      { title: { contains: search } },
-      { street: { contains: search } },
-      { neighborhood: { contains: search } },
-      { city: { contains: search } },
-      { owner: { name: { contains: search } } },
-    ];
+  const searchWhere = buildSearchWhere(
+    search,
+    [
+      "title",
+      "street",
+      "neighborhood",
+      "city",
+      "zipCode",
+      "owner.name",
+    ],
+  );
+  if (searchWhere) {
+    where.AND = [...((where.AND as any[]) || []), ...searchWhere];
   }
 
   const includeRelations = {
