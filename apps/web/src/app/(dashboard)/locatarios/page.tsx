@@ -108,20 +108,38 @@ function LocatariosContent() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState<Tenant | undefined>(undefined);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [tenantToDelete, setTenantToDelete] = useState<Tenant | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [openCtxMenu, CtxMenuPortal] = useContextMenu();
+  // Paginacao server-side
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalEntries, setTotalEntries] = useState(0);
+  const [stats, setStats] = useState({
+    totalTenants: 0,
+    activeContracts: 0,
+    inadimplentes: 0,
+    newThisMonth: 0,
+  });
 
   async function fetchTenants() {
     setLoading(true);
     try {
-      const response = await fetch("/api/tenants");
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("limit", String(PAGE_SIZE));
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      const response = await fetch(`/api/tenants?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
-        setTenants(data);
+        setTenants(data.data || []);
+        setTotalPages(data.pagination?.totalPages || 1);
+        setTotalEntries(data.pagination?.total || 0);
       }
     } catch (error) {
       console.error("Erro ao buscar locatarios:", error);
@@ -130,9 +148,44 @@ function LocatariosContent() {
     }
   }
 
+  async function fetchStats() {
+    try {
+      const res = await fetch("/api/tenants/stats");
+      if (res.ok) {
+        const data = await res.json();
+        setStats({
+          totalTenants: data.totalTenants || 0,
+          activeContracts: data.activeContracts || 0,
+          inadimplentes: data.inadimplentes || 0,
+          newThisMonth: data.newThisMonth || 0,
+        });
+      }
+    } catch (error) {
+      console.error("Erro ao buscar stats:", error);
+    }
+  }
+
+  async function refresh() {
+    await Promise.all([fetchTenants(), fetchStats()]);
+  }
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
   useEffect(() => {
     fetchTenants();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedSearch]);
 
   useEffect(() => {
     if (searchParams.get("novo") === "true") {
@@ -142,32 +195,9 @@ function LocatariosContent() {
     }
   }, [searchParams, router]);
 
-  const filteredTenants = tenants.filter((tenant) => {
-    if (!search) return true;
-    const term = search.toLowerCase();
-    return (
-      tenant.name.toLowerCase().includes(term) ||
-      (tenant.cpfCnpj && tenant.cpfCnpj.toLowerCase().includes(term)) ||
-      (tenant.email && tenant.email.toLowerCase().includes(term)) ||
-      (tenant.phone && tenant.phone.includes(term))
-    );
-  });
-
-  const totalTenants = tenants.length;
-  const activeContracts = tenants.filter(
-    (t) => t.currentProperty !== null
-  ).length;
-  const inadimplentes = tenants.filter(
-    (t) => t.paymentStatus === "ATRASADO"
-  ).length;
-  const now = new Date();
-  const newThisMonth = tenants.filter((t) => {
-    const created = new Date(t.createdAt);
-    return (
-      created.getMonth() === now.getMonth() &&
-      created.getFullYear() === now.getFullYear()
-    );
-  }).length;
+  // Servidor ja filtrou — `tenants` ja sao as linhas da pagina atual
+  const filteredTenants = tenants;
+  const { totalTenants, activeContracts, inadimplentes, newThisMonth } = stats;
 
   function handleNewTenant() {
     setSelectedTenant(undefined);
@@ -196,7 +226,7 @@ function LocatariosContent() {
         return;
       }
       toast.success("Locatário excluído com sucesso");
-      fetchTenants();
+      refresh();
     } catch (error) {
       toast.error("Erro ao excluir locatario");
     } finally {
@@ -206,7 +236,7 @@ function LocatariosContent() {
   }
 
   function handleFormSuccess() {
-    fetchTenants();
+    refresh();
   }
 
   return (
@@ -447,6 +477,22 @@ function LocatariosContent() {
               </div>
               </>
             )}
+
+            {/* Paginacao */}
+            {totalEntries > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-t flex-wrap">
+                <p className="text-xs text-muted-foreground">
+                  Mostrando {Math.min((page - 1) * PAGE_SIZE + 1, totalEntries)}-{Math.min(page * PAGE_SIZE, totalEntries)} de {totalEntries.toLocaleString("pt-BR")}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage(1)}>Primeira</Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage((p) => Math.max(1, p - 1))}>Anterior</Button>
+                  <span className="text-xs text-muted-foreground px-2">Pagina {page} de {totalPages}</span>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Proxima</Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage(totalPages)}>Ultima</Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -486,7 +532,7 @@ function LocatariosContent() {
         entityType="tenants"
         open={importOpen}
         onOpenChange={setImportOpen}
-        onSuccess={() => fetchTenants()}
+        onSuccess={() => refresh()}
       />
 
       <CtxMenuPortal />

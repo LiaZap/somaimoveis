@@ -99,20 +99,38 @@ function ProprietariosContent() {
   const [owners, setOwners] = useState<Owner[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [selectedOwner, setSelectedOwner] = useState<Owner | undefined>(undefined);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [ownerToDelete, setOwnerToDelete] = useState<Owner | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [openCtxMenu, CtxMenuPortal] = useContextMenu();
+  // Paginacao server-side
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalEntries, setTotalEntries] = useState(0);
+  const [stats, setStats] = useState({
+    totalOwners: 0,
+    totalProperties: 0,
+    totalMonthlyIncome: 0,
+    newThisMonth: 0,
+  });
 
   async function fetchOwners() {
     setLoading(true);
     try {
-      const response = await fetch("/api/owners");
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("limit", String(PAGE_SIZE));
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      const response = await fetch(`/api/owners?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
-        setOwners(data);
+        setOwners(data.data || []);
+        setTotalPages(data.pagination?.totalPages || 1);
+        setTotalEntries(data.pagination?.total || 0);
       }
     } catch (error) {
       console.error("Erro ao buscar proprietarios:", error);
@@ -121,9 +139,44 @@ function ProprietariosContent() {
     }
   }
 
+  async function fetchStats() {
+    try {
+      const res = await fetch("/api/owners/stats");
+      if (res.ok) {
+        const data = await res.json();
+        setStats({
+          totalOwners: data.totalOwners || 0,
+          totalProperties: data.totalProperties || 0,
+          totalMonthlyIncome: data.totalMonthlyIncome || 0,
+          newThisMonth: data.newThisMonth || 0,
+        });
+      }
+    } catch (error) {
+      console.error("Erro ao buscar stats:", error);
+    }
+  }
+
+  async function refresh() {
+    await Promise.all([fetchOwners(), fetchStats()]);
+  }
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
   useEffect(() => {
     fetchOwners();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedSearch]);
 
   useEffect(() => {
     if (searchParams.get("novo") === "true") {
@@ -133,28 +186,10 @@ function ProprietariosContent() {
     }
   }, [searchParams, router]);
 
-  const filteredOwners = owners.filter((owner) => {
-    if (!search) return true;
-    const term = search.toLowerCase();
-    return (
-      owner.name.toLowerCase().includes(term) ||
-      (owner.cpfCnpj && owner.cpfCnpj.toLowerCase().includes(term)) ||
-      (owner.email && owner.email.toLowerCase().includes(term)) ||
-      (owner.phone && owner.phone.includes(term))
-    );
-  });
+  // Servidor ja filtrou — `owners` ja sao as linhas da pagina atual
+  const filteredOwners = owners;
 
-  const totalOwners = owners.length;
-  const totalProperties = owners.reduce((sum, o) => sum + o.propertyCount, 0);
-  const totalMonthlyIncome = owners.reduce((sum, o) => sum + o.monthlyIncome, 0);
-  const now = new Date();
-  const newThisMonth = owners.filter((o) => {
-    const created = new Date(o.createdAt);
-    return (
-      created.getMonth() === now.getMonth() &&
-      created.getFullYear() === now.getFullYear()
-    );
-  }).length;
+  const { totalOwners, totalProperties, totalMonthlyIncome, newThisMonth } = stats;
 
   function handleNewOwner() {
     setSelectedOwner(undefined);
@@ -183,7 +218,7 @@ function ProprietariosContent() {
         return;
       }
       toast.success("Proprietário excluído com sucesso");
-      fetchOwners();
+      refresh();
     } catch (error) {
       toast.error("Erro ao excluir proprietario");
     } finally {
@@ -193,7 +228,7 @@ function ProprietariosContent() {
   }
 
   function handleFormSuccess() {
-    fetchOwners();
+    refresh();
   }
 
   return (
@@ -424,6 +459,22 @@ function ProprietariosContent() {
               </div>
               </>
             )}
+
+            {/* Paginacao */}
+            {totalEntries > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-t flex-wrap">
+                <p className="text-xs text-muted-foreground">
+                  Mostrando {Math.min((page - 1) * PAGE_SIZE + 1, totalEntries)}-{Math.min(page * PAGE_SIZE, totalEntries)} de {totalEntries.toLocaleString("pt-BR")}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage(1)}>Primeira</Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage((p) => Math.max(1, p - 1))}>Anterior</Button>
+                  <span className="text-xs text-muted-foreground px-2">Pagina {page} de {totalPages}</span>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Proxima</Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage(totalPages)}>Ultima</Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -463,7 +514,7 @@ function ProprietariosContent() {
         entityType="owners"
         open={importOpen}
         onOpenChange={setImportOpen}
-        onSuccess={() => fetchOwners()}
+        onSuccess={() => refresh()}
       />
 
       <CtxMenuPortal />
