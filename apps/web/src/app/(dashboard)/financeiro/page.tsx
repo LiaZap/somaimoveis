@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -178,11 +178,24 @@ function FinanceiroContent() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [activeTab, setActiveTab] = useState("todos");
   // Filtros de data
   const [dateField, setDateField] = useState<"dueDate" | "paidAt" | "createdAt">("dueDate");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  // Paginacao server-side
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalEntries, setTotalEntries] = useState(0);
+  // Stats agregados (server-side)
+  const [stats, setStats] = useState({
+    totalFaturamento: 0,
+    totalAReceber: 0,
+    totalEmAtraso: 0,
+    recebidoEsteMes: 0,
+  });
   // Sheet lateral de detalhe (conferencia rapida)
   const [detailPaymentId, setDetailPaymentId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -217,13 +230,27 @@ function FinanceiroContent() {
   const [boletoLoading, setBoletoLoading] = useState<Record<string, boolean>>({});
   const [notifyLoading, setNotifyLoading] = useState<Record<string, boolean>>({});
 
+  function buildQueryParams() {
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("limit", String(PAGE_SIZE));
+    if (activeTab !== "todos") params.set("tab", activeTab);
+    if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
+    if (dateField) params.set("dateField", dateField);
+    return params.toString();
+  }
+
   async function fetchPayments() {
     setLoading(true);
     try {
-      const response = await fetch("/api/payments");
+      const response = await fetch(`/api/payments?${buildQueryParams()}`);
       if (response.ok) {
         const data = await response.json();
-        setPayments(data);
+        setPayments(data.data || []);
+        setTotalPages(data.pagination?.totalPages || 1);
+        setTotalEntries(data.pagination?.total || 0);
       }
     } catch (error) {
       console.error("Erro ao buscar pagamentos:", error);
@@ -232,9 +259,48 @@ function FinanceiroContent() {
     }
   }
 
+  async function fetchStats() {
+    try {
+      const res = await fetch("/api/payments/stats");
+      if (res.ok) {
+        const data = await res.json();
+        setStats({
+          totalFaturamento: data.totalFaturamento || 0,
+          totalAReceber: data.totalAReceber || 0,
+          totalEmAtraso: data.totalEmAtraso || 0,
+          recebidoEsteMes: data.recebidoEsteMes || 0,
+        });
+      }
+    } catch (error) {
+      console.error("Erro ao buscar stats:", error);
+    }
+  }
+
+  async function refresh() {
+    await Promise.all([fetchPayments(), fetchStats()]);
+  }
+
+  // Debounce de busca
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset paginacao ao mudar filtros
+  useEffect(() => {
+    setPage(1);
+  }, [activeTab, debouncedSearch, dateField, dateFrom, dateTo]);
+
+  // Stats iniciais (sem dependencia de filtros â€” mostra totalizadores globais)
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  // Refetch ao mudar pagina ou filtros
   useEffect(() => {
     fetchPayments();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, activeTab, debouncedSearch, dateField, dateFrom, dateTo]);
 
   useEffect(() => {
     if (searchParams.get("novo") === "true") {
@@ -244,15 +310,13 @@ function FinanceiroContent() {
     }
   }, [searchParams, router]);
 
-  // Summary calculations
-  const totalFaturamento = payments
-    .filter((p) => p.status === "PAGO")
-    .reduce((sum, p) => sum + (p.paidValue ?? p.value), 0);
+  // Stats vem do servidor (server-side) â€” ja filtrados/agregados.
+  const { totalFaturamento, totalAReceber, totalEmAtraso, recebidoEsteMes } = stats;
 
+  // Helper: pagamento estÃ¡ atrasado (PENDENTE com vencimento passado)
+  // Mantido para badges visuais nas linhas individuais.
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-
-  // Helper: pagamento está atrasado (status ATRASADO ou PENDENTE com vencimento passado)
   const isOverdue = (p: Payment) => {
     if (p.status === "ATRASADO") return true;
     if (p.status === "PENDENTE") {
@@ -263,66 +327,8 @@ function FinanceiroContent() {
     return false;
   };
 
-  const totalAReceber = payments
-    .filter((p) => p.status === "PENDENTE" && !isOverdue(p))
-    .reduce((sum, p) => sum + p.value, 0);
-
-  const totalEmAtraso = payments
-    .filter((p) => isOverdue(p))
-    .reduce((sum, p) => sum + p.value, 0);
-
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
-  const recebidoEsteMes = payments
-    .filter((p) => {
-      if (p.status !== "PAGO" || !p.paidAt) return false;
-      const paidDate = new Date(p.paidAt);
-      return paidDate.getMonth() === currentMonth && paidDate.getFullYear() === currentYear;
-    })
-    .reduce((sum, p) => sum + (p.paidValue ?? p.value), 0);
-
-  // Client-side filtering by status tab
-  const filteredByStatus = payments.filter((payment) => {
-    if (activeTab === "todos") return true;
-    if (activeTab === "pendentes") return payment.status === "PENDENTE" && !isOverdue(payment);
-    if (activeTab === "pagos") return payment.status === "PAGO";
-    if (activeTab === "atrasados") return isOverdue(payment);
-    if (activeTab === "emitidos") return payment.boletoStatus === "EMITIDO";
-    if (activeTab === "nao_emitidos") return !payment.nossoNumero && (payment.status === "PENDENTE" || payment.status === "ATRASADO");
-    return true;
-  });
-
-  // Client-side filter by date range
-  const filteredByDate = filteredByStatus.filter((payment) => {
-    if (!dateFrom && !dateTo) return true;
-    const fieldValue = payment[dateField];
-    if (!fieldValue) return false;
-    const date = new Date(fieldValue);
-    if (dateFrom) {
-      const from = new Date(`${dateFrom}T00:00:00`);
-      if (date < from) return false;
-    }
-    if (dateTo) {
-      const to = new Date(`${dateTo}T23:59:59`);
-      if (date > to) return false;
-    }
-    return true;
-  });
-
-  // Client-side search
-  const filteredPayments = filteredByDate.filter((payment) => {
-    if (!search) return true;
-    const term = search.toLowerCase();
-    return (
-      payment.code.toLowerCase().includes(term) ||
-      (payment.tenant?.name || "").toLowerCase().includes(term) ||
-      (payment.owner?.name || "").toLowerCase().includes(term) ||
-      (payment.contract?.code || "").toLowerCase().includes(term) ||
-      (payment.contract?.property?.title || "").toLowerCase().includes(term) ||
-      (payment.description || "").toLowerCase().includes(term)
-    );
-  });
+  // Servidor ja aplicou filtros/busca/aba â€” `payments` ja sao as linhas da pagina atual
+  const filteredPayments = payments;
 
   function handleNewPayment() {
     setSelectedPayment(undefined);
@@ -350,7 +356,7 @@ function FinanceiroContent() {
         toast.error(error.error || "Erro ao excluir pagamento");
         return;
       }
-      fetchPayments();
+      refresh();
     } catch (error) {
       toast.error("Erro ao excluir pagamento");
     } finally {
@@ -375,14 +381,14 @@ function FinanceiroContent() {
         toast.error(error.error || "Erro ao atualizar pagamento");
         return;
       }
-      fetchPayments();
+      refresh();
     } catch (error) {
       toast.error("Erro ao atualizar pagamento");
     }
   }
 
   function handleFormSuccess() {
-    fetchPayments();
+    refresh();
   }
 
   const handleEmitBoleto = async (paymentId: string) => {
@@ -392,7 +398,7 @@ function FinanceiroContent() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error || `Erro ao emitir boleto (${res.status})`);
       toast.success("Boleto emitido com sucesso!");
-      fetchPayments();
+      refresh();
     } catch (err: any) {
       toast.error(err.message || "Erro ao emitir boleto", { duration: 15000 });
     } finally {
@@ -434,7 +440,7 @@ function FinanceiroContent() {
           toast.error(`${e.code}: ${e.error}`, { duration: 15000 });
         }
       }
-      fetchPayments();
+      refresh();
     } catch (err: any) {
       toast.error(err.message || "Erro ao emitir boletos");
     }
@@ -443,7 +449,7 @@ function FinanceiroContent() {
   const [batchNotifyLoading, setBatchNotifyLoading] = useState(false);
 
   const handleSendNotifyBatch = async () => {
-    if (!confirm("Enviar cobranças (WhatsApp + Email) para todos os boletos emitidos que ainda não foram notificados?")) return;
+    if (!confirm("Enviar cobranÃ§as (WhatsApp + Email) para todos os boletos emitidos que ainda nÃ£o foram notificados?")) return;
     setBatchNotifyLoading(true);
     try {
       const res = await fetch("/api/payments/notify/batch", {
@@ -452,7 +458,7 @@ function FinanceiroContent() {
         body: JSON.stringify({}),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || `Erro ao enviar cobranças (${res.status})`);
+      if (!res.ok) throw new Error(data?.error || `Erro ao enviar cobranÃ§as (${res.status})`);
       toast.success(data.message, { duration: 10000 });
 
       // Poll progress if processing in background
@@ -464,13 +470,13 @@ function FinanceiroContent() {
             if (progress.done) {
               clearInterval(pollInterval);
               setBatchNotifyLoading(false);
-              toast.success(`Envio concluído: ${progress.sent} enviado(s), ${progress.failed} falha(s)`, { duration: 15000 });
+              toast.success(`Envio concluÃ­do: ${progress.sent} enviado(s), ${progress.failed} falha(s)`, { duration: 15000 });
               if (progress.errors?.length > 0) {
                 for (const e of progress.errors) {
                   toast.error(`${e.code}: ${e.error}`, { duration: 15000 });
                 }
               }
-              fetchPayments();
+              refresh();
             } else {
               toast.info(`Progresso: ${progress.sent + progress.failed}/${progress.total} processado(s)...`, { duration: 5000 });
             }
@@ -480,7 +486,7 @@ function FinanceiroContent() {
         setBatchNotifyLoading(false);
       }
     } catch (err: any) {
-      toast.error(err.message || "Erro ao enviar cobranças em lote", { duration: 15000 });
+      toast.error(err.message || "Erro ao enviar cobranÃ§as em lote", { duration: 15000 });
       setBatchNotifyLoading(false);
     }
   };
@@ -494,7 +500,7 @@ function FinanceiroContent() {
         body: JSON.stringify({ channels }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || `Erro ao enviar cobrança (${res.status})`);
+      if (!res.ok) throw new Error(data?.error || `Erro ao enviar cobranÃ§a (${res.status})`);
       const successResults = data.results?.filter((r: any) => r.success) || [];
       const failResults = data.results?.filter((r: any) => !r.success) || [];
       if (successResults.length > 0) {
@@ -507,7 +513,7 @@ function FinanceiroContent() {
           toast.error(`${f.channel}: ${f.error}`);
         }
       }
-      fetchPayments(); // Atualizar lista (boleto pode ter sido emitido)
+      refresh();
     } catch (err: any) {
       toast.error(err.message || "Erro ao enviar cobranca");
     } finally {
@@ -569,7 +575,7 @@ function FinanceiroContent() {
                   <div className="flex items-center gap-1 mt-1">
                     <ArrowDownRight className="h-3.5 w-3.5 text-red-500" />
                     <span className="text-xs text-red-500 font-medium">
-                      {payments.filter((p) => isOverdue(p)).length} cobrança(s) atrasada(s)
+                      {payments.filter((p) => isOverdue(p)).length} cobranÃ§a(s) atrasada(s)
                     </span>
                   </div>
                 </div>
@@ -589,11 +595,7 @@ function FinanceiroContent() {
                     {loading ? "..." : formatCurrency(recebidoEsteMes)}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {payments.filter((p) => {
-                      if (p.status !== "PAGO" || !p.paidAt) return false;
-                      const paidDate = new Date(p.paidAt);
-                      return paidDate.getMonth() === currentMonth && paidDate.getFullYear() === currentYear;
-                    }).length} pagamento(s)
+                    {recebidoEsteMes > 0 ? "este mes" : "—"}
                   </p>
                 </div>
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100">
@@ -613,7 +615,7 @@ function FinanceiroContent() {
                   <TabsList className="h-9 sm:h-8">
                     <TabsTrigger value="todos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Todos</TabsTrigger>
                     <TabsTrigger value="pendentes" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Pendentes</TabsTrigger>
-                    <TabsTrigger value="nao_emitidos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Não Emitidos</TabsTrigger>
+                    <TabsTrigger value="nao_emitidos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">NÃ£o Emitidos</TabsTrigger>
                     <TabsTrigger value="emitidos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Emitidos</TabsTrigger>
                     <TabsTrigger value="pagos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Pagos</TabsTrigger>
                     <TabsTrigger value="atrasados" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">Atrasados</TabsTrigger>
@@ -635,7 +637,7 @@ function FinanceiroContent() {
                     <span>Enviando...</span>
                   ) : (
                     <>
-                      <span className="hidden sm:inline">Enviar Cobranças</span>
+                      <span className="hidden sm:inline">Enviar CobranÃ§as</span>
                       <span className="sm:hidden">Cobrar</span>
                     </>
                   )}
@@ -699,7 +701,7 @@ function FinanceiroContent() {
                     setMonthShortcut("");
                   }}
                   className="h-10 sm:h-8 w-[140px] text-xs"
-                  placeholder="Até"
+                  placeholder="AtÃ©"
                   title="Data final"
                 />
                 {(dateFrom || dateTo) && (
@@ -841,7 +843,7 @@ function FinanceiroContent() {
                           )}
                           {breakdown && (breakdown.debitos ?? 0) > 0 && (
                             <Badge variant="outline" className="text-[10px] h-5 border gap-1 bg-red-50 text-red-700 border-red-200">
-                              +Déb
+                              +DÃ©b
                             </Badge>
                           )}
                           <span className="text-xs text-muted-foreground">Venc: {formatDate(payment.dueDate)}</span>
@@ -856,8 +858,8 @@ function FinanceiroContent() {
                             {breakdown.iptu > 0 ? ` + IPTU: ${formatCurrency(breakdown.iptu)}` : ""}
                             {(breakdown.seguroFianca ?? 0) > 0 ? ` + Seguro: ${formatCurrency(breakdown.seguroFianca!)}` : ""}
                             {(breakdown.taxaBancaria ?? 0) > 0 ? ` + Tx Banc: ${formatCurrency(breakdown.taxaBancaria!)}` : ""}
-                            {(breakdown.debitos ?? 0) > 0 ? ` + Déb: ${formatCurrency(breakdown.debitos!)}` : ""}
-                            {(breakdown.creditos ?? breakdown.desconto ?? 0) > 0 ? ` - Créd: ${formatCurrency((breakdown.creditos ?? breakdown.desconto)!)}` : ""}
+                            {(breakdown.debitos ?? 0) > 0 ? ` + DÃ©b: ${formatCurrency(breakdown.debitos!)}` : ""}
+                            {(breakdown.creditos ?? breakdown.desconto ?? 0) > 0 ? ` - CrÃ©d: ${formatCurrency((breakdown.creditos ?? breakdown.desconto)!)}` : ""}
                           </p>
                           {breakdown.lancamentos && breakdown.lancamentos.length > 0 && (
                             <p className="text-[10px] text-muted-foreground/70">
@@ -926,15 +928,15 @@ function FinanceiroContent() {
               <Table className="table-fixed w-full">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-xs w-[75px]">Código</TableHead>
+                    <TableHead className="text-xs w-[75px]">CÃ³digo</TableHead>
                     <TableHead className="text-xs w-[65px]">Contrato</TableHead>
-                    <TableHead className="text-xs w-[110px]">Locatário</TableHead>
+                    <TableHead className="text-xs w-[110px]">LocatÃ¡rio</TableHead>
                     <TableHead className="text-xs text-right w-[85px]">Valor</TableHead>
-                    <TableHead className="text-xs w-[130px]">Composição</TableHead>
+                    <TableHead className="text-xs w-[130px]">ComposiÃ§Ã£o</TableHead>
                     <TableHead className="text-xs w-[80px]">Vencimento</TableHead>
                     <TableHead className="text-xs w-[80px]">Pagamento</TableHead>
                     <TableHead className="text-xs w-[110px]">Status</TableHead>
-                    <TableHead className="text-xs w-[90px]">Nº Boleto</TableHead>
+                    <TableHead className="text-xs w-[90px]">NÂº Boleto</TableHead>
                     <TableHead className="text-xs w-[60px]">Metodo</TableHead>
                     <TableHead className="text-xs w-[120px]">Boleto</TableHead>
                     <TableHead className="text-xs w-[65px]">Envio</TableHead>
@@ -975,28 +977,28 @@ function FinanceiroContent() {
                                         <span className="text-[10px] text-muted-foreground">+ Tx Banc: {formatCurrency(breakdown.taxaBancaria!)}</span>
                                       )}
                                       {(breakdown.debitos ?? 0) > 0 && (
-                                        <span className="text-[10px] text-red-600">+ Déb: {formatCurrency(breakdown.debitos!)}</span>
+                                        <span className="text-[10px] text-red-600">+ DÃ©b: {formatCurrency(breakdown.debitos!)}</span>
                                       )}
                                       {(breakdown.creditos ?? breakdown.desconto ?? 0) > 0 && (
-                                        <span className="text-[10px] text-green-600">- Créd: {formatCurrency((breakdown.creditos ?? breakdown.desconto)!)}</span>
+                                        <span className="text-[10px] text-green-600">- CrÃ©d: {formatCurrency((breakdown.creditos ?? breakdown.desconto)!)}</span>
                                       )}
                                     </div>
                                   </div>
                                 </TooltipTrigger>
                                 <TooltipContent side="bottom" className="max-w-sm text-xs space-y-1 p-3">
-                                  <p className="font-medium border-b pb-1 mb-1">Composição do Valor</p>
+                                  <p className="font-medium border-b pb-1 mb-1">ComposiÃ§Ã£o do Valor</p>
                                   {breakdown.isProrata ? (
                                     <p>Aluguel: {formatCurrency(breakdown.aluguel)} <span className="text-muted-foreground">({breakdown.prorataDias}/30 dias - original: {formatCurrency(breakdown.aluguelOriginal!)})</span></p>
                                   ) : (
                                     <p>Aluguel: {formatCurrency(breakdown.aluguel)}</p>
                                   )}
-                                  {breakdown.condominio > 0 && <p className="text-orange-600">+ Condomínio: {formatCurrency(breakdown.condominio)}</p>}
+                                  {breakdown.condominio > 0 && <p className="text-orange-600">+ CondomÃ­nio: {formatCurrency(breakdown.condominio)}</p>}
                                   {breakdown.iptu > 0 && <p className="text-purple-600">+ IPTU: {formatCurrency(breakdown.iptu)}</p>}
-                                  {(breakdown.seguroFianca ?? 0) > 0 && <p className="text-cyan-600">+ Seguro Fiança: {formatCurrency(breakdown.seguroFianca!)}</p>}
-                                  {(breakdown.taxaBancaria ?? 0) > 0 && <p>+ Taxa Bancária: {formatCurrency(breakdown.taxaBancaria!)}</p>}
+                                  {(breakdown.seguroFianca ?? 0) > 0 && <p className="text-cyan-600">+ Seguro FianÃ§a: {formatCurrency(breakdown.seguroFianca!)}</p>}
+                                  {(breakdown.taxaBancaria ?? 0) > 0 && <p>+ Taxa BancÃ¡ria: {formatCurrency(breakdown.taxaBancaria!)}</p>}
                                   {breakdown.lancamentos && breakdown.lancamentos.length > 0 && (
                                     <>
-                                      <p className="font-medium border-t pt-1 mt-1">Lançamentos</p>
+                                      <p className="font-medium border-t pt-1 mt-1">LanÃ§amentos</p>
                                       {breakdown.lancamentos.map((l, i) => (
                                         <p key={i} className={l.tipo === "CREDITO" ? "text-green-600" : "text-red-600"}>
                                           {l.tipo === "CREDITO" ? "(-) " : "(+) "}{l.descricao}: {formatCurrency(l.valor)}
@@ -1025,7 +1027,7 @@ function FinanceiroContent() {
                               {status.label}
                             </Badge>
                             {payment.boletoStatus && (() => {
-                              // Extrair tipo de liquidação do description (ex: "Sicredi: PIX | ...")
+                              // Extrair tipo de liquidaÃ§Ã£o do description (ex: "Sicredi: PIX | ...")
                               let tipoLabel = payment.boletoStatus;
                               if (payment.description && payment.description.startsWith("Sicredi:")) {
                                 const tipo = payment.description.split("|")[0].replace("Sicredi:", "").trim();
@@ -1201,6 +1203,22 @@ function FinanceiroContent() {
               </div>
               </>
             )}
+
+            {/* Paginacao */}
+            {totalEntries > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-t flex-wrap">
+                <p className="text-xs text-muted-foreground">
+                  Mostrando {Math.min((page - 1) * PAGE_SIZE + 1, totalEntries)}-{Math.min(page * PAGE_SIZE, totalEntries)} de {totalEntries.toLocaleString("pt-BR")}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage(1)}>Primeira</Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page <= 1 || loading} onClick={() => setPage((p) => Math.max(1, p - 1))}>Anterior</Button>
+                  <span className="text-xs text-muted-foreground px-2">Pagina {page} de {totalPages}</span>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Proxima</Button>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={page >= totalPages || loading} onClick={() => setPage(totalPages)}>Ultima</Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1209,7 +1227,7 @@ function FinanceiroContent() {
       <GenerateChargesDialog
         open={generateOpen}
         onOpenChange={setGenerateOpen}
-        onSuccess={fetchPayments}
+        onSuccess={refresh}
       />
 
       {/* Payment Form Dialog */}

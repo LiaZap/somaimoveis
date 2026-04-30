@@ -9,6 +9,13 @@ export async function GET(request: NextRequest) {
   const status = searchParams.get("status");
   const search = searchParams.get("search");
   const contractId = searchParams.get("contractId");
+  const tab = searchParams.get("tab"); // todos|pendentes|pagos|atrasados|emitidos|nao_emitidos
+  const dateField = (searchParams.get("dateField") || "dueDate") as
+    | "dueDate"
+    | "paidAt"
+    | "createdAt";
+  const dateFrom = searchParams.get("dateFrom");
+  const dateTo = searchParams.get("dateTo");
 
   const where: Record<string, unknown> = {};
   if (status && status !== "all") where.status = status;
@@ -17,7 +24,44 @@ export async function GET(request: NextRequest) {
     where.OR = [
       { code: { contains: search } },
       { tenant: { name: { contains: search } } },
+      { owner: { name: { contains: search } } },
+      { description: { contains: search } },
+      { contract: { code: { contains: search } } },
+      { contract: { property: { title: { contains: search } } } },
     ];
+  }
+
+  // Filtro por aba (status especiais)
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (tab === "pendentes") {
+    where.status = "PENDENTE";
+    where.dueDate = { gte: today };
+  } else if (tab === "pagos") {
+    where.status = "PAGO";
+  } else if (tab === "atrasados") {
+    // PENDENTE com vencimento passado OU status ATRASADO
+    where.OR = [
+      ...((where.OR as any[]) || []),
+      { status: "ATRASADO" },
+      { AND: [{ status: "PENDENTE" }, { dueDate: { lt: today } }] },
+    ];
+    delete where.status;
+  } else if (tab === "emitidos") {
+    where.boletoStatus = "EMITIDO";
+  } else if (tab === "nao_emitidos") {
+    where.AND = [
+      { OR: [{ nossoNumero: null }, { nossoNumero: "" }] },
+      { OR: [{ status: "PENDENTE" }, { status: "ATRASADO" }] },
+    ];
+  }
+
+  // Filtro por data
+  if (dateFrom || dateTo) {
+    const range: { gte?: Date; lte?: Date } = {};
+    if (dateFrom) range.gte = new Date(`${dateFrom}T00:00:00`);
+    if (dateTo) range.lte = new Date(`${dateTo}T23:59:59`);
+    where[dateField] = range;
   }
 
   const includeRelations = {
@@ -76,8 +120,28 @@ export async function GET(request: NextRequest) {
     prisma.payment.count({ where }),
   ]);
 
+  // Enriquecer com notificacoes enviadas
+  const paymentIds = payments.map((p) => p.id);
+  const sentNotifications = paymentIds.length > 0
+    ? await prisma.notification.findMany({
+        where: { paymentId: { in: paymentIds }, status: "ENVIADO" },
+        select: { paymentId: true, channel: true, sentAt: true },
+        orderBy: { sentAt: "desc" },
+      })
+    : [];
+  const notifByPayment = new Map<string, { channel: string; sentAt: Date | null }[]>();
+  for (const n of sentNotifications) {
+    if (!n.paymentId) continue;
+    if (!notifByPayment.has(n.paymentId)) notifByPayment.set(n.paymentId, []);
+    notifByPayment.get(n.paymentId)!.push({ channel: n.channel, sentAt: n.sentAt });
+  }
+  const enriched = payments.map((p) => ({
+    ...p,
+    notifications: notifByPayment.get(p.id) || [],
+  }));
+
   return NextResponse.json({
-    data: payments,
+    data: enriched,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   });
 }
