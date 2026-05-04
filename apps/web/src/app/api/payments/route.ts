@@ -22,8 +22,12 @@ export async function GET(request: NextRequest) {
   if (status && status !== "all") where.status = status;
   if (contractId) where.contractId = contractId;
 
-  // Busca tokenizada: cada palavra do termo precisa estar presente em algum campo.
-  // Ex: "Maria Silva" → encontra "Maria Aparecida Silva" e "Silva, Maria Joana".
+  // Busca tokenizada focada em quem PAGA o boleto: locatario, codigo,
+  // contrato e imovel. Nao busca por nome do proprietario porque na tela
+  // /financeiro a coluna principal eh o locatario — incluir owner gera
+  // resultados confusos (ex: buscar "Joao" trazia pagamentos de outros
+  // locatarios cujo imovel pertence a um proprietario chamado Joao).
+  // Para buscar por proprietario, use a tela /proprietarios ou /contratos.
   const searchWhere = buildSearchWhere(
     search,
     [
@@ -32,13 +36,11 @@ export async function GET(request: NextRequest) {
       "nossoNumero",
       "tenant.name",
       "tenant.cpfCnpj",
-      "owner.name",
-      "owner.cpfCnpj",
       "contract.code",
       "contract.property.title",
     ],
     {
-      numericFields: ["tenant.cpfCnpj", "owner.cpfCnpj", "nossoNumero"],
+      numericFields: ["tenant.cpfCnpj", "nossoNumero"],
     },
   );
   if (searchWhere) {
