@@ -36,34 +36,82 @@ export async function GET(_request: NextRequest) {
       dueDate: true,
       description: true,
       type: true,
+      category: true,
       value: true,
+      notes: true,
       createdAt: true,
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" }, // mais recente primeiro
   });
 
-  // Agrupa por chave de duplicata
+  // Helper: extrai tenantEntryId do notes (entries criadas a partir de
+  // lancamentos do locatario com destination=PROPRIETARIO)
+  function extractTenantEntryId(notes: string | null): string | null {
+    if (!notes) return null;
+    try {
+      const parsed = JSON.parse(notes);
+      return typeof parsed.tenantEntryId === "string" ? parsed.tenantEntryId : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Helper: extrai sharePercent do notes
+  function extractSharePercent(notes: string | null): number | null {
+    if (!notes) return null;
+    try {
+      const parsed = JSON.parse(notes);
+      return typeof parsed.sharePercent === "number" ? parsed.sharePercent : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Agrupa em duas categorias:
+  // 1) Entries com tenantEntryId no notes → chave: (ownerId, tenantEntryId, value)
+  //    O mesmo lancamento do locatario nao deve gerar 2 entradas pro mesmo
+  //    proprietario. Diferentes mLabels (descricoes) sao a mesma coisa.
+  // 2) Entries sem tenantEntryId (REPASSE, etc) → chave: (ownerId, contractId,
+  //    dueDate, description, type, value) — match exato como antes.
   const groups = new Map<string, typeof allEntries>();
   for (const entry of allEntries) {
-    const key = [
-      entry.ownerId,
-      entry.contractId || "null",
-      entry.dueDate?.toISOString() || "null",
-      entry.description,
-      entry.type,
-      entry.value.toFixed(2),
-    ].join("|");
+    const tenantEntryId = extractTenantEntryId(entry.notes);
+    let key: string;
+    if (tenantEntryId) {
+      // Mesmo lancamento de origem → so pode existir 1 por proprietario+share
+      const share = extractSharePercent(entry.notes);
+      key = [
+        "TE",
+        entry.ownerId,
+        entry.contractId || "null",
+        tenantEntryId,
+        share !== null ? share.toFixed(2) : "100",
+      ].join("|");
+    } else {
+      // Sem tenantEntryId (REPASSE etc) → match exato
+      key = [
+        "EX",
+        entry.ownerId,
+        entry.contractId || "null",
+        entry.dueDate?.toISOString() || "null",
+        entry.description,
+        entry.type,
+        entry.value.toFixed(2),
+      ].join("|");
+    }
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(entry);
   }
 
-  // Identifica IDs a deletar (manter o primeiro de cada grupo, descartar resto)
+  // Identifica IDs a deletar (manter o MAIS RECENTE de cada grupo —
+  // ele reflete o estado atual do banco apos o ultimo billing)
   const idsToDelete: string[] = [];
   let groupsWithDupes = 0;
   for (const [, entries] of groups) {
     if (entries.length > 1) {
       groupsWithDupes++;
-      // Mantem o primeiro (mais antigo), descarta os demais
+      // Como ordenamos createdAt: "desc", o primeiro eh o mais recente.
+      // Descarta os demais (mais antigos).
       for (let i = 1; i < entries.length; i++) {
         idsToDelete.push(entries[i].id);
       }
