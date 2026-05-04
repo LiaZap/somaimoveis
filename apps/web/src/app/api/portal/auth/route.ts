@@ -22,22 +22,80 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Buscar proprietario por email ou cpfCnpj com portal ativo
-    const whereConditions: Record<string, unknown>[] = [];
-    if (email) whereConditions.push({ email, portalActive: true });
-    if (cpfCnpj) whereConditions.push({ cpfCnpj, portalActive: true });
+    // Buscar proprietario por email ou cpfCnpj com portal ativo.
+    // Para CPF/CNPJ aceita qualquer formato (com ou sem pontuacao) — busca
+    // tanto pela string original quanto pelos digitos puros.
+    let owner: {
+      id: string;
+      name: string;
+      email: string | null;
+      portalActive: boolean;
+      portalToken: string | null;
+      portalPassword: string | null;
+    } | null = null;
 
-    const owner = await prisma.owner.findFirst({
-      where: { OR: whereConditions },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        portalActive: true,
-        portalToken: true,
-        portalPassword: true,
-      },
-    });
+    if (email) {
+      owner = await prisma.owner.findFirst({
+        where: { email, portalActive: true },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          portalActive: true,
+          portalToken: true,
+          portalPassword: true,
+        },
+      });
+    }
+
+    if (!owner && cpfCnpj) {
+      // Tenta match exato primeiro (mais rapido — usa indice unique)
+      owner = await prisma.owner.findFirst({
+        where: { cpfCnpj, portalActive: true },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          portalActive: true,
+          portalToken: true,
+          portalPassword: true,
+        },
+      });
+
+      // Fallback: compara digitos puros (CPF/CNPJ pode ter formato diferente)
+      if (!owner) {
+        const inputDigits = cpfCnpj.replace(/\D/g, "");
+        if (inputDigits.length >= 11) {
+          // Busca todos com portalActive=true e compara digit-only
+          // (volume baixo de owners — OK fazer em JS)
+          const candidates = await prisma.owner.findMany({
+            where: { portalActive: true },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              portalActive: true,
+              portalToken: true,
+              portalPassword: true,
+              cpfCnpj: true,
+            },
+          });
+          const found = candidates.find(
+            (o) => o.cpfCnpj.replace(/\D/g, "") === inputDigits,
+          );
+          if (found) {
+            owner = {
+              id: found.id,
+              name: found.name,
+              email: found.email,
+              portalActive: found.portalActive,
+              portalToken: found.portalToken,
+              portalPassword: found.portalPassword,
+            };
+          }
+        }
+      }
+    }
 
     if (!owner) {
       return NextResponse.json(
