@@ -72,15 +72,21 @@ export async function GET(request: NextRequest) {
       })
     : [];
 
-  // Lancamentos do proprietario PENDENTES ligados a este contrato
+  // Lancamentos do proprietario PENDENTES — busca por contractId OU
+  // descricao contendo o codigo do contrato (entries com contractId null
+  // podem aparecer no /repasses mas nao no filtro por contractId direto)
   const ownerEntries = await prisma.ownerEntry.findMany({
     where: {
-      contractId: contract.id,
       status: "PENDENTE",
+      OR: [
+        { contractId: contract.id },
+        { description: { contains: contract.code } },
+      ],
     },
     select: {
       id: true,
       ownerId: true,
+      contractId: true,
       owner: { select: { name: true } },
       type: true,
       category: true,
@@ -88,6 +94,7 @@ export async function GET(request: NextRequest) {
       value: true,
       dueDate: true,
       notes: true,
+      createdAt: true,
     },
     orderBy: { description: "asc" },
   });
@@ -107,11 +114,14 @@ export async function GET(request: NextRequest) {
       id: e.id,
       ownerId: e.ownerId,
       ownerName: e.owner?.name,
+      contractId: e.contractId,
+      contractIdMatchesContract: e.contractId === contract.id,
       type: e.type,
       category: e.category,
       description: e.description,
       value: e.value,
       dueDate: e.dueDate,
+      createdAt: e.createdAt,
       sharePercent,
       tenantEntryId,
       tenantEntryExists: tenantEntryId

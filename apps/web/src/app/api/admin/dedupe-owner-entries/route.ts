@@ -44,6 +44,12 @@ export async function GET(_request: NextRequest) {
     orderBy: { createdAt: "desc" }, // mais recente primeiro
   });
 
+  // Helper: extrai o codigo do contrato da descricao (ex: 'IPTU 04/2026 - CTR-19 (50%)' → 'CTR-19')
+  function extractContractCode(description: string): string | null {
+    const match = description.match(/\b(CTR-[\w-]+|\d{3,})\b/);
+    return match ? match[1] : null;
+  }
+
   // Helper: extrai tenantEntryId do notes (entries criadas a partir de
   // lancamentos do locatario com destination=PROPRIETARIO)
   function extractTenantEntryId(notes: string | null): string | null {
@@ -78,12 +84,13 @@ export async function GET(_request: NextRequest) {
     const tenantEntryId = extractTenantEntryId(entry.notes);
     let key: string;
     if (tenantEntryId) {
-      // Mesmo lancamento de origem → so pode existir 1 por proprietario+share
+      // Mesmo lancamento de origem → so pode existir 1 por proprietario+share.
+      // NAO usa contractId na chave porque entries antigas podem ter
+      // contractId=null mas referirem ao mesmo contrato (CTR-XX na descricao).
       const share = extractSharePercent(entry.notes);
       key = [
         "TE",
         entry.ownerId,
-        entry.contractId || "null",
         tenantEntryId,
         share !== null ? share.toFixed(2) : "100",
       ].join("|");
