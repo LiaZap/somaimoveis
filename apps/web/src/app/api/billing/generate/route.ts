@@ -366,12 +366,15 @@ export async function POST(request: NextRequest) {
         // Condominio, IPTU and other fees are NOT included in the IRRF base,
         // since grossToOwner = rentalValue - adminFee (does not include condoFee or iptuMonthly).
         const grossToOwner = splitOwnerValue;
-        // IRRF SO se aplica quando locador eh PF e locatario eh PJ.
-        // Caso contrario nao ha retencao na fonte (Receita Federal).
+        // IRRF SO se aplica quando locador=PF e locatario=PJ.
+        // E desde 01/01/2026 (Lei 15.270/2025) so se aluguel > R$ 5.000.
+        // Passamos dueDate como refDate pra o calculator escolher a regra certa
+        // (boletos vencendo em 2025 usam piso 2.259,20; em 2026+ piso 5.000).
         const irrf = calculateIRRFRental({
           grossToOwner,
           ownerType: (contract as any).owner?.personType || "PF",
           tenantType: (contract as any).tenant?.personType || "PF",
+          refDate: dueDate,
         });
         const irrfValue = irrf.irrfValue;
         const irrfRate = irrf.rate;

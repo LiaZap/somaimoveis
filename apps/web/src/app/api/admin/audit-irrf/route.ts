@@ -34,6 +34,8 @@ async function audit(request: NextRequest, apply: boolean) {
     select: {
       id: true,
       code: true,
+      value: true,
+      paidValue: true,
       irrfValue: true,
       irrfRate: true,
       paidAt: true,
@@ -51,6 +53,12 @@ async function audit(request: NextRequest, apply: boolean) {
       },
     },
   });
+
+  // Lei 15.270/2025 — desde 01/01/2026 isencao IRRF aluguel ate R$ 5.000/mes
+  const NEW_RULE_START = new Date("2026-01-01T00:00:00Z");
+  const NEW_RULE_FLOOR = 5000;
+  // Antes era R$ 2.259,20
+  const OLD_RULE_FLOOR = 2259.2;
 
   /**
    * Detecta PF ou PJ. Primeiro pelo personType explicito; se nulo,
@@ -86,7 +94,10 @@ async function audit(request: NextRequest, apply: boolean) {
     tenantDoc: string;
     tenantDetectionSource: string;
     motivo: string;
+    motivoCategoria: "OWNER_PJ" | "TENANT_PF" | "ABAIXO_PISO";
     paidAt: string | null;
+    dueDate: string | null;
+    valor: number;
   };
 
   const incorrect: IncorrectItem[] = [];
@@ -104,12 +115,33 @@ async function audit(request: NextRequest, apply: boolean) {
     const ownerIsPF = ownerInfo.type === "PF";
     const tenantIsPJ = tenantInfo.type === "PJ";
 
-    // Regra correta: IRRF so quando owner=PF E tenant=PJ
-    if (ownerIsPF && tenantIsPJ) continue;
-
+    // 1. Regra basica: owner=PF E tenant=PJ
     let motivo = "";
-    if (!ownerIsPF) motivo = `Locador eh PJ — sem retencao na fonte (PJ recebe valor cheio)`;
-    else motivo = `Locatario eh PF — sem retencao na fonte (PF nao retem aluguel)`;
+    let motivoCategoria: IncorrectItem["motivoCategoria"] | null = null;
+
+    if (!ownerIsPF) {
+      motivo = "Locador eh PJ — sem retencao na fonte (PJ recebe valor cheio)";
+      motivoCategoria = "OWNER_PJ";
+    } else if (!tenantIsPJ) {
+      motivo = "Locatario eh PF — sem retencao na fonte (PF nao retem aluguel)";
+      motivoCategoria = "TENANT_PF";
+    } else {
+      // Owner PF + Tenant PJ — caso valido em principio. Mas verifica o piso:
+      // 2. Lei 15.270/2025 — desde 01/01/2026 isencao ate R$ 5.000
+      const refDate = p.dueDate || p.paidAt;
+      const isNew = refDate ? refDate >= NEW_RULE_START : true;
+      const piso = isNew ? NEW_RULE_FLOOR : OLD_RULE_FLOOR;
+      const valor = p.paidValue ?? p.value ?? 0;
+
+      if (valor <= piso) {
+        motivo = `Aluguel ${formatBRL(valor)} <= piso ${formatBRL(piso)} (${
+          isNew ? "Lei 15.270/2025 — isento ate R$ 5.000" : "isencao R$ 2.259,20"
+        }) — IRRF nao deveria aplicar`;
+        motivoCategoria = "ABAIXO_PISO";
+      }
+    }
+
+    if (!motivoCategoria) continue; // este pagamento esta correto
 
     incorrect.push({
       paymentId: p.id,
@@ -124,8 +156,15 @@ async function audit(request: NextRequest, apply: boolean) {
       tenantDoc: p.contract?.tenant?.cpfCnpj || "",
       tenantDetectionSource: tenantInfo.source,
       motivo,
+      motivoCategoria,
       paidAt: p.paidAt?.toISOString() || null,
+      dueDate: p.dueDate?.toISOString() || null,
+      valor: p.paidValue ?? p.value ?? 0,
     });
+  }
+
+  function formatBRL(v: number): string {
+    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
   }
 
   const totalIrrfIncorreto = incorrect.reduce((s, x) => s + x.irrfValue, 0);
@@ -151,8 +190,9 @@ async function audit(request: NextRequest, apply: boolean) {
       .sort((a, b) => b.total - a.total);
 
     // Estatisticas de tipo de erro
-    const ownerEhPJ = incorrect.filter((x) => x.ownerType === "PJ").length;
-    const tenantEhPF = incorrect.filter((x) => x.tenantType === "PF" && x.ownerType === "PF").length;
+    const ownerEhPJ = incorrect.filter((x) => x.motivoCategoria === "OWNER_PJ").length;
+    const tenantEhPF = incorrect.filter((x) => x.motivoCategoria === "TENANT_PF").length;
+    const abaixoPiso = incorrect.filter((x) => x.motivoCategoria === "ABAIXO_PISO").length;
     const detectadoPorDoc = incorrect.filter(
       (x) => x.ownerDetectionSource === "doc-length" || x.tenantDetectionSource === "doc-length",
     ).length;
@@ -166,6 +206,7 @@ async function audit(request: NextRequest, apply: boolean) {
       breakdown: {
         ownerEhPJ,                       // owner CNPJ — IRRF incabivel
         tenantEhPF_ownerPF: tenantEhPF,  // PF -> PF — IRRF incabivel
+        abaixoPiso,                      // PF->PJ mas aluguel abaixo do piso (R$ 5.000 em 2026)
         detectadoPorDocumento: detectadoPorDoc, // detectado pela qty de digitos
       },
       resumoPorOwner,
