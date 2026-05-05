@@ -12,16 +12,18 @@ import {
   DollarSign,
   FileText,
   Receipt,
+  TrendingUp,
 } from "lucide-react";
 
 const portalPrimaryItems: BottomNavItem[] = [
   { label: "Inicio", href: "/portal", icon: LayoutDashboard, exact: true },
   { label: "Imóveis", href: "/portal/imoveis", icon: Building2 },
-  { label: "Financeiro", href: "/portal/financeiro", icon: DollarSign },
+  { label: "Repasses", href: "/portal/repasses", icon: TrendingUp },
   { label: "Contratos", href: "/portal/contratos", icon: FileText },
 ];
 
 const portalMoreItems: BottomNavItem[] = [
+  { label: "Financeiro", href: "/portal/financeiro", icon: DollarSign },
   { label: "Extrato", href: "/portal/extrato", icon: Receipt },
   { label: "Demonstrativo", href: "/portal/demonstrativo", icon: Receipt },
   { label: "Fiscal", href: "/portal/fiscal", icon: FileText },
