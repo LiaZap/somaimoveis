@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { requireAdmin, isAuthError } from "@/lib/api-auth";
 import { parseCnab240Retorno } from "@/lib/cnab240-retorno";
 
 /**
@@ -9,7 +9,7 @@ import { parseCnab240Retorno } from "@/lib/cnab240-retorno";
  * Faz o match com OwnerEntries pendentes e opcionalmente marca como PAGO.
  */
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth();
+  const auth = await requireAdmin();
   if (isAuthError(auth)) return auth;
 
   try {

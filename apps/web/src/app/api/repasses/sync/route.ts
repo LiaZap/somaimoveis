@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { requireAdmin, isAuthError } from "@/lib/api-auth";
 
 /**
  * POST /api/repasses/sync?month=YYYY-MM
  * Sincroniza os repasses para todos os pagamentos PAGO do mes que ainda nao
  * tem uma OwnerEntry REPASSE correspondente. Util para corrigir pagamentos
  * legados ou criados manualmente fora do fluxo /api/billing/generate.
+ *
+ * Apenas ADMIN — acao destrutiva (cria registros).
  */
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth();
+  const auth = await requireAdmin();
   if (isAuthError(auth)) return auth;
 
   try {

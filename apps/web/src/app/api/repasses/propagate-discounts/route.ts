@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { requireAdmin, isAuthError } from "@/lib/api-auth";
 
 /**
  * POST /api/repasses/propagate-discounts?month=YYYY-MM
@@ -18,7 +18,7 @@ import { requireAuth, isAuthError } from "@/lib/api-auth";
  * - TenantEntry CREDITO (desconto dado ao locatario) → OwnerEntry DEBITO (proprietario banca)
  */
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth();
+  const auth = await requireAdmin();
   if (isAuthError(auth)) return auth;
 
   try {

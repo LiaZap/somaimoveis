@@ -44,8 +44,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     "notifications:send",
     "profile:view",
     "profile:edit",
-    // NOTA: FINANCEIRO nao tem acesso a "repasses:*" nem "notas-fiscais:*"
-    // conforme solicitacao do Leo (apenas cobranca e boletos).
+    "repasses:view",      // listar e gerar demonstrativo (sem destrutivos)
+    "notas-fiscais:view", // visualizar (sem emitir)
   ],
 };
 
@@ -108,9 +108,10 @@ export const RESTRICTED_ROUTES: Record<string, string[]> = {
   "/configuracoes": ["ADMIN"],
   "/configuracoes/auditoria": ["ADMIN"],
   "/usuarios": ["ADMIN"],
-  // Repasses e notas fiscais: somente ADMIN e CORRETOR (FINANCEIRO nao acessa)
-  "/repasses": ["ADMIN", "CORRETOR"],
-  "/notas-fiscais": ["ADMIN", "CORRETOR"],
+  // Repasses e notas fiscais: ADMIN ve tudo, CORRETOR/FINANCEIRO ve
+  // versao simplificada (sem agregados da empresa nem botoes destrutivos)
+  "/repasses": ["ADMIN", "CORRETOR", "FINANCEIRO"],
+  "/notas-fiscais": ["ADMIN", "CORRETOR", "FINANCEIRO"],
 };
 
 // ============================================================================
@@ -159,9 +160,11 @@ export const DEFAULT_PAGES_BY_ROLE: Record<string, string[]> = {
     "relatorios", "notificacoes", "fiscal",
   ],
   FINANCEIRO: [
-    // FINANCEIRO NAO TEM acesso a repasses/notas-fiscais
+    // FINANCEIRO ve repasses/notas-fiscais em modo simplificado
+    // (sem agregados da empresa, sem botoes destrutivos)
     "dashboard", "imoveis", "proprietarios", "locatarios", "contratos",
-    "financeiro", "lancamentos", "relatorios", "notificacoes", "fiscal",
+    "financeiro", "lancamentos", "repasses", "notas-fiscais",
+    "relatorios", "notificacoes", "fiscal",
   ],
 };
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { requireAdmin, isAuthError } from "@/lib/api-auth";
 
 /**
  * DELETE /api/repasses/undo-sync?month=YYYY-MM
@@ -12,7 +12,7 @@ import { requireAuth, isAuthError } from "@/lib/api-auth";
  * NUNCA apaga OwnerEntries PAGO, CANCELADO ou que nao sao auto-sync.
  */
 export async function DELETE(request: NextRequest) {
-  const auth = await requireAuth();
+  const auth = await requireAdmin();
   if (isAuthError(auth)) return auth;
 
   try {

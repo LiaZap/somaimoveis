@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import { toast } from "sonner";
+import { isAdmin as isAdminRole } from "@/lib/rbac";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -168,6 +170,13 @@ function getOwnerPaymentTypes(owner: OwnerData): ("PIX" | "TED")[] {
 }
 
 export default function RepassesPage() {
+  const { data: session } = useSession();
+  // canAdmin: pode usar acoes destrutivas (Sincronizar, Importar Retorno,
+  // Propagar Descontos, Desfazer Sync) e ver agregados da empresa.
+  // CORRETOR/FINANCEIRO veem listagem + demonstrativo + export, mas sem
+  // botoes destrutivos nem totais agregados da empresa.
+  const canAdmin = isAdminRole((session?.user as any)?.role);
+
   const [groups, setGroups] = useState<OwnerGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -729,7 +738,8 @@ export default function RepassesPage() {
       <Header title="Repasses" subtitle="Gerenciamento de repasses aos proprietarios" />
 
       <div className="p-4 sm:p-6 space-y-4">
-        {/* Summary Cards */}
+        {/* Summary Cards — agregados da empresa, so admin ve */}
+        {canAdmin && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="border-0 shadow-sm">
             <CardContent className="p-5">
@@ -800,6 +810,7 @@ export default function RepassesPage() {
             </CardContent>
           </Card>
         </div>
+        )}
 
         {/* Selection bar */}
         {selectedEntries.size > 0 && (
@@ -924,6 +935,9 @@ export default function RepassesPage() {
                   className="hidden"
                   onChange={handleRetornoUpload}
                 />
+                {/* Acoes destrutivas — somente ADMIN. CORRETOR/FINANCEIRO
+                    veem listagem + demonstrativo + export, sem essas. */}
+                {canAdmin && (<>
                 <Button
                   size="sm"
                   variant="outline"
@@ -982,8 +996,9 @@ export default function RepassesPage() {
                   <span className="hidden sm:inline">Desfazer Sync</span>
                   <span className="sm:hidden">Desfazer</span>
                 </Button>
+                </>)}
 
-                {isSelectable && (
+                {canAdmin && isSelectable && (
                   <>
                     <Button
                       size="sm"

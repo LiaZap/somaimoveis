@@ -10,9 +10,9 @@ const PORTAL_JWT_ISSUER = "somma-portal";
 // aqui antes de servir a pagina (defense-in-depth). Proprietarios
 // do portal NUNCA passam (eles nem chegam aqui — nao tem cookie).
 const SENSITIVE_DASHBOARD_ROUTES: Record<string, string[]> = {
-  "/repasses": ["ADMIN", "CORRETOR"],
+  "/repasses": ["ADMIN", "CORRETOR", "FINANCEIRO"],
   "/financeiro": ["ADMIN", "CORRETOR", "FINANCEIRO"],
-  "/notas-fiscais": ["ADMIN", "CORRETOR"],
+  "/notas-fiscais": ["ADMIN", "CORRETOR", "FINANCEIRO"],
   "/lancamentos": ["ADMIN", "CORRETOR", "FINANCEIRO"],
   "/fiscal": ["ADMIN", "CORRETOR", "FINANCEIRO"],
 };
