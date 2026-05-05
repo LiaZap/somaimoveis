@@ -23,6 +23,7 @@ const portalPrimaryItems: BottomNavItem[] = [
 
 const portalMoreItems: BottomNavItem[] = [
   { label: "Extrato", href: "/portal/extrato", icon: Receipt },
+  { label: "Demonstrativo", href: "/portal/demonstrativo", icon: Receipt },
   { label: "Fiscal", href: "/portal/fiscal", icon: FileText },
 ];
 
