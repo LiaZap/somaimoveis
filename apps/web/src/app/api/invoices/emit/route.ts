@@ -156,6 +156,15 @@ export async function POST(request: NextRequest) {
       ? `${entry.dueDate.getFullYear()}-${String(entry.dueDate.getMonth() + 1).padStart(2, "0")}`
       : null;
 
+    // Numero sequencial da DPS — usa o proximo disponivel no banco
+    const lastInvoice = await prisma.invoice.findFirst({
+      orderBy: { createdAt: "desc" },
+      select: { numero: true },
+    });
+    const nextNumeroDps = lastInvoice?.numero
+      ? parseInt(lastInvoice.numero) + 1
+      : 1;
+
     try {
       const result = await emitirNFSe({
         ambiente,
@@ -167,6 +176,15 @@ export async function POST(request: NextRequest) {
           cnpj: settings.cnpj.replace(/\D/g, ""),
           inscricaoMunicipal: settings.inscricaoMunicipal,
           razaoSocial: settings.razaoSocial || "SOMMA IMOVEIS LTDA",
+          endereco: {
+            logradouro: settings.street || "Rua Tenente Coronel Brito",
+            numero: settings.number || "138",
+            complemento: settings.complement || undefined,
+            bairro: settings.neighborhood || "Centro",
+            cidade: settings.city || "Santa Cruz do Sul",
+            uf: settings.state || "RS",
+            cep: (settings.zipCode || "96810-202").replace(/\D/g, ""),
+          },
           regimeTributario: (settings.regimeTributario as any) || "SIMPLES_NACIONAL",
         },
         tomador: {
@@ -192,6 +210,7 @@ export async function POST(request: NextRequest) {
           issRetido: settings.retemIss,
           municipioPrestacao: ibge || "4316808",
         },
+        numeroDps: nextNumeroDps,
       });
 
       if (!result.sucesso) {

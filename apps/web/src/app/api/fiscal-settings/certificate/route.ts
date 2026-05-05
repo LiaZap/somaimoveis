@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, isAuthError } from "@/lib/api-auth";
 import { isAdmin } from "@/lib/rbac";
 import { encryptString, isEncryptionConfigured } from "@/lib/crypto";
+import { extractPfx } from "@/lib/nfse-pfx";
 
 /**
  * POST /api/fiscal-settings/certificate
@@ -54,14 +55,20 @@ export async function POST(request: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-
-    // NOTA: nao validamos a senha aqui — Node nao tem suporte nativo a PKCS12.
-    // A validacao real acontece na primeira tentativa de emissao de NF
-    // (assinatura digital). Se a senha estiver errada, o usuario refaz upload.
-    // Tamanho minimo basico (PFX legitimos sao > 2KB)
     if (buffer.length < 1000) {
       return NextResponse.json(
         { error: "Arquivo muito pequeno para ser um .pfx valido." },
+        { status: 400 },
+      );
+    }
+
+    // Valida senha + extrai metadados (validade, subject, CNPJ)
+    let cert;
+    try {
+      cert = extractPfx(buffer, password);
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: err?.message || "Senha do certificado incorreta ou arquivo invalido." },
         { status: 400 },
       );
     }
@@ -78,13 +85,18 @@ export async function POST(request: NextRequest) {
         certificadoPfx: buffer,
         certificadoPassword: encryptString(password),
         certificadoNome: file.name,
-        // Validade preenchida manualmente pelo usuario na tela
+        certificadoExpiraEm: cert.validUntil,
       },
     });
 
     return NextResponse.json({
-      message: "Certificado carregado com sucesso. Validacao da senha sera feita na primeira emissao.",
+      message: "Certificado carregado e validado com sucesso.",
       certificadoNome: updated.certificadoNome,
+      certificadoExpiraEm: updated.certificadoExpiraEm,
+      subject: cert.subject,
+      cnpj: cert.cnpj,
+      issuer: cert.issuer,
+      validUntil: cert.validUntil,
       sizeBytes: buffer.length,
     });
   } catch (error: any) {
