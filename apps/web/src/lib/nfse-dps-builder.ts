@@ -108,16 +108,16 @@ export function buildDpsXml(params: DpsParams): { xml: string; idDps: string } {
 
   const tpAmb = params.ambiente === "PRODUCAO" ? "1" : "2";
 
-  // ID da DPS no padrao Sefin Nacional:
-  //   "DPS" + cMun(7) + AAMM(4) + tpInsc(1) + nInsc(14) + tpAmb(1) + tpEmis(1) + nDPS(15) + cDV(1)
-  // Total: 3 + 44 = 47 caracteres
+  // ID da DPS no padrao Sefin Nacional v1.6:
+  //   "DPS" + cMun(7) + AAMM(4) + tpInsc(1) + nInsc(14) + tpAmb(1) + tpEmis(1) + nDPS(18) + cDV(1)
+  // Total: 3 + 47 = 50 caracteres (= DPS\d{47})
   const cMun = onlyDigits(params.codigoMunicipioEmissao).padStart(7, "0").substring(0, 7);
   const dt = params.dhEmissao;
   const aamm = `${String(dt.getFullYear() % 100).padStart(2, "0")}${String(dt.getMonth() + 1).padStart(2, "0")}`;
   const tpInsc = "1"; // CNPJ
   const nInsc = onlyDigits(prestador.cnpj).padStart(14, "0");
   const tpEmis = "1";
-  const nDPSStr = String(params.numeroDps).padStart(15, "0");
+  const nDPSStr = String(params.numeroDps).padStart(18, "0");
   const idPartial = cMun + aamm + tpInsc + nInsc + tpAmb + tpEmis + nDPSStr;
   const cDV = calcMod11DV(idPartial);
   const idDps = `DPS${idPartial}${cDV}`;
