@@ -219,15 +219,46 @@ async function audit(request: NextRequest, apply: boolean) {
     });
   }
 
-  // APPLY: zera os campos
-  const ids = incorrect.map((x) => x.paymentId);
+  // APPLY: zera IRRF e RECALCULA netToOwner sem o IRRF (caso contrario
+  // o demonstrativo continuaria mostrando total errado)
   let updatedPayments = 0;
-  if (ids.length > 0) {
-    const res = await prisma.payment.updateMany({
-      where: { id: { in: ids } },
-      data: { irrfValue: 0, irrfRate: 0 },
+  for (const item of incorrect) {
+    const p = payments.find((py) => py.id === item.paymentId);
+    if (!p) continue;
+
+    // splitOwnerValue ja eh o valor liquido apos taxa adm (sem IRRF na regra)
+    // netToOwner = splitOwnerValue (sem mais descontar o IRRF que era zero)
+    // Recalcula: pega o splitAdminValue e netToOwner direto do banco
+    const paymentRecord = await prisma.payment.findUnique({
+      where: { id: p.id },
+      select: {
+        paidValue: true,
+        value: true,
+        splitOwnerValue: true,
+        splitAdminValue: true,
+        netToOwner: true,
+        irrfValue: true,
+      },
     });
-    updatedPayments = res.count;
+    if (!paymentRecord) continue;
+
+    const oldIrrf = paymentRecord.irrfValue ?? 0;
+    // Se o netToOwner atual = splitOwnerValue - irrf, precisamos restaurar
+    // o irrf de volta no netToOwner
+    const oldNet = paymentRecord.netToOwner ?? 0;
+    const splitOwner = paymentRecord.splitOwnerValue ?? 0;
+    // Novo netToOwner = splitOwnerValue (sem desconto de IRRF)
+    const newNet = splitOwner > 0 ? splitOwner : oldNet + oldIrrf;
+
+    await prisma.payment.update({
+      where: { id: p.id },
+      data: {
+        irrfValue: 0,
+        irrfRate: 0,
+        netToOwner: Math.round(newNet * 100) / 100,
+      },
+    });
+    updatedPayments++;
   }
 
   // Atualizar OwnerEntries REPASSE/GARANTIA correspondentes — limpa irrfValue do notes
