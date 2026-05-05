@@ -33,36 +33,34 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "ownerId obrigatorio" }, { status: 400 });
     }
 
-    // O parametro `month` agora eh interpretado como MES DE REFERENCIA
-    // do aluguel (= mes em que o locatario morou). Como a cobranca eh
-    // in-arrears, os boletos efetivamente cobrados/pagos vencem no MES
-    // SEGUINTE (refMonth + 1).
+    // O parametro `month` representa o MES DO BOLETO (vencimento) — o
+    // mesmo mes que o usuario seleciona no filtro. O mes de REFERENCIA
+    // do aluguel eh o mes ANTERIOR (cobranca in-arrears).
     //
-    // Ex: month=2026-04 (referencia abril) → boletos com dueDate em maio.
-    //     Demonstrativo mostra "Mes Referencia: 04/2026".
-    let refYear: number, refMonth: number;
+    // Ex: month=2026-04 (boletos vencendo em abril) → aluguel referente
+    //     a marco/2026. Label do demonstrativo: "Mes Referencia: 03/2026".
+    let targetYear: number, targetMonth: number;
     if (monthStr && /^\d{4}-\d{2}$/.test(monthStr)) {
       const [y, m] = monthStr.split("-").map(Number);
-      refYear = y;
-      refMonth = m - 1;
+      targetYear = y;
+      targetMonth = m - 1;
     } else {
-      // Default: mes anterior (referente)
       const now = new Date();
-      refYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-      refMonth = (now.getMonth() + 11) % 12;
+      targetYear = now.getFullYear();
+      targetMonth = now.getMonth();
     }
 
-    // targetMonth = refMonth + 1 (mes do vencimento dos boletos)
-    let targetYear = refYear;
-    let targetMonth = refMonth + 1;
-    if (targetMonth > 11) {
-      targetMonth = 0;
-      targetYear += 1;
+    // refMonth = targetMonth - 1 (= mes do aluguel cobrado in-arrears)
+    let refYear = targetYear;
+    let refMonth = targetMonth - 1;
+    if (refMonth < 0) {
+      refMonth = 11;
+      refYear -= 1;
     }
 
     const monthStart = new Date(targetYear, targetMonth, 1);
     const monthEnd = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59, 999);
-    // Label mostra o mes de REFERENCIA (= mes do aluguel cobrado)
+    // Label mostra o mes de REFERENCIA do aluguel (= mes anterior ao venc)
     const mLabel = `${String(refMonth + 1).padStart(2, "0")}/${refYear}`;
     const periodStart = monthStart.toLocaleDateString("pt-BR", { timeZone: "UTC" });
     const periodEnd = monthEnd.toLocaleDateString("pt-BR", { timeZone: "UTC" });
@@ -461,7 +459,13 @@ export async function GET(request: NextRequest) {
       // Processar cada REPASSE
       for (const rp of pendingRepasses) {
         const { entry: e, noteData, refDate, dateStr } = rp;
-        const monthRef = `${String(new Date(refDate).getMonth() + 1).padStart(2, "0")}/${new Date(refDate).getFullYear()}`;
+        // Mes de REFERENCIA do aluguel = mes anterior ao vencimento
+        // (cobranca in-arrears: boleto vence em maio cobrando aluguel
+        // de abril). monthRef deve ser "04/2026", nao "05/2026".
+        const refDateObj = new Date(refDate);
+        const refY = refDateObj.getMonth() === 0 ? refDateObj.getFullYear() - 1 : refDateObj.getFullYear();
+        const refM = (refDateObj.getMonth() + 11) % 12;
+        const monthRef = `${String(refM + 1).padStart(2, "0")}/${refY}`;
 
         const brutoTotalContrato = noteData?.aluguelBruto || e.value;
         const adminFeePercent = noteData?.adminFeePercent || 10;
