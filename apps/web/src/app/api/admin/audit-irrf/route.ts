@@ -91,18 +91,38 @@ async function audit(request: NextRequest, apply: boolean) {
   const totalIrrfIncorreto = incorrect.reduce((s, x) => s + x.irrfValue, 0);
 
   if (!apply) {
+    const { searchParams } = new URL(request.url);
+    const limit = parseInt(searchParams.get("limit") || "50", 10);
+    const limited = isFinite(limit) && limit > 0 ? Math.min(limit, 1000) : 50;
+
+    // Agrupar por proprietario pra facilitar conferencia
+    const byOwner = new Map<string, { name: string; type: string; count: number; total: number }>();
+    for (const x of incorrect) {
+      const key = x.ownerName + "|" + x.ownerType;
+      if (!byOwner.has(key)) {
+        byOwner.set(key, { name: x.ownerName, type: x.ownerType, count: 0, total: 0 });
+      }
+      const g = byOwner.get(key)!;
+      g.count++;
+      g.total += x.irrfValue;
+    }
+    const resumoPorOwner = Array.from(byOwner.values())
+      .map((g) => ({ ...g, total: Math.round(g.total * 100) / 100 }))
+      .sort((a, b) => b.total - a.total);
+
     return NextResponse.json({
       mode: "DRY_RUN",
       totalPagamentosComIrrf: payments.length,
       totalCorretos: payments.length - incorrect.length,
       totalIncorretos: incorrect.length,
       totalIrrfIncorreto: Math.round(totalIrrfIncorreto * 100) / 100,
-      incorretos: incorrect.slice(0, 50), // limita pra resposta nao explodir
-      truncated: incorrect.length > 50,
+      resumoPorOwner,
+      incorretos: incorrect.slice(0, limited),
+      truncated: incorrect.length > limited,
       mensagem:
         incorrect.length === 0
           ? "Nenhum IRRF aplicado incorretamente — tudo ok."
-          : `${incorrect.length} pagamentos com IRRF aplicado incorretamente. POST com ?apply=1 pra corrigir.`,
+          : `${incorrect.length} pagamentos com IRRF aplicado incorretamente. POST com ?apply=1 pra corrigir TODOS.`,
     });
   }
 
