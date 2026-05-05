@@ -1,9 +1,10 @@
 /**
  * Assinatura XAdES-Enveloped para a DPS do Padrao Nacional NFS-e.
  *
- * Caracteristicas obrigatorias do gov.br:
+ * Caracteristicas obrigatorias do gov.br (validadas contra XML real
+ * autorizado pelo EmissorWeb 1.6.0.0):
  *  - Algoritmo: RSA-SHA256
- *  - Canonicalization: C14N exclusiva sem comentarios
+ *  - Canonicalization: C14N exclusiva COM comentarios (#WithComments)
  *  - Tipo: enveloped (assinatura DENTRO do XML, dentro do elemento DPS)
  *  - Reference URI: aponta pro Id do infDPS (ex: "#DPS-...")
  *  - KeyInfo: inclui o certificado X.509 base64
@@ -34,16 +35,19 @@ export function signDps(params: SignDpsParams): string {
     privateKey: params.privateKeyPem,
     publicCert: params.certificatePem,
     signatureAlgorithm: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
-    canonicalizationAlgorithm: "http://www.w3.org/2001/10/xml-exc-c14n#",
+    // C14N exclusiva COM comentarios — alinhado com o XML real do
+    // EmissorWeb (validado em DPS411370025041074700019670000000000000000013)
+    canonicalizationAlgorithm: "http://www.w3.org/2001/10/xml-exc-c14n#WithComments",
   });
 
   // Reference: aponta pro id do infDPS, com transforms padrao SEFIN
+  // (enveloped + c14n exclusiva COM comentarios)
   sig.addReference({
     xpath: `//*[@Id='${params.idDps}']`,
     digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
     transforms: [
       "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
-      "http://www.w3.org/2001/10/xml-exc-c14n#",
+      "http://www.w3.org/2001/10/xml-exc-c14n#WithComments",
     ],
   });
 
