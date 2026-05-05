@@ -109,19 +109,16 @@ export function buildDpsXml(params: DpsParams): { xml: string; idDps: string } {
   const tpAmb = params.ambiente === "PRODUCAO" ? "1" : "2";
 
   // ID da DPS no padrao Sefin Nacional v1.6 (pattern: DPS\d{41}, 44 chars).
-  // Estrutura observada em XML real:
-  //   DPS + cMun(7) + AAMM(4) + tpInsc(1) + nInsc(14) + serie(5) + nDPS(9) + cDV(1)
+  // Estrutura DECODIFICADA de XML real funcionando:
+  //   DPS + cMun(7) + "2"(1) + CNPJ(14) + serie(5) + nDPS(14)
   // Total: 3 + 41 = 44 caracteres
+  // O "2" na pos 11 eh um indicador constante (talvez modelo NFSe).
   const cMun = onlyDigits(params.codigoMunicipioEmissao).padStart(7, "0").substring(0, 7);
-  const dt = params.dhEmissao;
-  const aamm = `${String(dt.getFullYear() % 100).padStart(2, "0")}${String(dt.getMonth() + 1).padStart(2, "0")}`;
-  const tpInsc = "1"; // CNPJ
+  const flagConst = "2"; // indicador (constante observada em XMLs reais)
   const nInsc = onlyDigits(prestador.cnpj).padStart(14, "0");
   const serieStr = onlyDigits(params.numeroSerie).padStart(5, "0").substring(0, 5);
-  const nDPSStr = String(params.numeroDps).padStart(9, "0").substring(0, 9);
-  const idPartial = cMun + aamm + tpInsc + nInsc + serieStr + nDPSStr;
-  const cDV = calcMod11DV(idPartial);
-  const idDps = `DPS${idPartial}${cDV}`;
+  const nDPSStr = String(params.numeroDps).padStart(14, "0").substring(0, 14);
+  const idDps = `DPS${cMun}${flagConst}${nInsc}${serieStr}${nDPSStr}`;
   const dhEmi = formatDateIso(params.dhEmissao);
   const dCompet = params.competencia.split("T")[0];
 
