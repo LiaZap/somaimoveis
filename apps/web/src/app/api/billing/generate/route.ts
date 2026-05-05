@@ -179,8 +179,12 @@ export async function POST(request: NextRequest) {
           isProrata = true;
         }
 
-        // Último mês do contrato: término no meio do mês de referencia
-        if (contractEnd) {
+        // Último mês do contrato: término no meio do mês de referencia.
+        // SO aplica se o contrato esta ENCERRADO (terminou de fato).
+        // Contratos com status ATIVO ou PENDENTE_RENOVACAO seguem em vigencia
+        // (renovacao automatica), entao cobram mes cheio mesmo com endDate
+        // no passado/no mes corrente.
+        if (contractEnd && contract.status === "ENCERRADO") {
           const ceYear = contractEnd.getUTCFullYear();
           const ceMonth = contractEnd.getUTCMonth();
           const ceDay = contractEnd.getUTCDate();
