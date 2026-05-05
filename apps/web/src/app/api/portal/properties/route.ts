@@ -14,8 +14,21 @@ export async function GET(request: NextRequest) {
   try {
     const { ownerId } = auth;
 
+    // Inclui imoveis em que o owner eh co-proprietario via PropertyOwner
+    const propertyShares = await prisma.propertyOwner.findMany({
+      where: { ownerId },
+      select: { propertyId: true },
+    });
+    const sharedPropertyIds = propertyShares.map((s) => s.propertyId);
+
     const properties = await prisma.property.findMany({
-      where: { ownerId, active: true },
+      where: {
+        active: true,
+        OR: [
+          { ownerId },
+          ...(sharedPropertyIds.length > 0 ? [{ id: { in: sharedPropertyIds } }] : []),
+        ],
+      },
       include: {
         photos: {
           orderBy: { order: "asc" },

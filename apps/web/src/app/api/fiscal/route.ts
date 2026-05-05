@@ -91,7 +91,7 @@ export async function GET(request: NextRequest) {
       {
         id: string;
         title: string;
-        months: Map<number, { gross: number; admin: number; net: number }>;
+        months: Map<number, { gross: number; admin: number; net: number; irrf: number }>;
       }
     >();
 
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
       const month = paidDate.getMonth();
 
       if (!prop.months.has(month)) {
-        prop.months.set(month, { gross: 0, admin: 0, net: 0 });
+        prop.months.set(month, { gross: 0, admin: 0, net: 0, irrf: 0 });
       }
 
       const monthData = prop.months.get(month)!;
@@ -125,10 +125,15 @@ export async function GET(request: NextRequest) {
       monthData.gross += paidValue;
       monthData.admin += splitAdmin;
       monthData.net += splitOwner;
+      // IRRF: usa o valor REALMENTE retido no pagamento (gravado pelo
+      // billing). Garante que o relatorio reflete exatamente o que foi
+      // descontado, e nao um recalculo separado que pode diferir.
+      monthData.irrf += payment.irrfValue || 0;
     }
 
-    // Montar relatorio por propriedade
-    const isPF = owner.personType === "PF";
+    // Montar relatorio por propriedade.
+    // IRRF lido dos pagamentos (campo Payment.irrfValue), nao recalculado.
+    // Assim o relatorio sempre bate com o que foi efetivamente retido.
     const properties: FiscalPropertySummary[] = [];
 
     for (const [propId, propData] of propertyMap) {
@@ -147,7 +152,10 @@ export async function GET(request: NextRequest) {
         const maintenanceCost = maintenanceMap.get(`${propId}-${m}`) || 0;
         const taxableIncome = Math.max(0, monthData.net - maintenanceCost);
 
-        const irrf = isPF ? calculateIRRF(taxableIncome) : { rate: 0, irrfValue: 0 };
+        // IRRF do mes = soma do irrfValue dos pagamentos do mes (real retido)
+        const irrfValue = Math.round(monthData.irrf * 100) / 100;
+        // Aliquota efetiva = irrf / taxableIncome (so pra exibicao)
+        const irrfRate = taxableIncome > 0 ? irrfValue / taxableIncome : 0;
 
         months.push({
           month: m + 1,
@@ -157,8 +165,8 @@ export async function GET(request: NextRequest) {
           netToOwner: Math.round(monthData.net * 100) / 100,
           maintenanceCost: Math.round(maintenanceCost * 100) / 100,
           taxableIncome: Math.round(taxableIncome * 100) / 100,
-          irrfRate: irrf.rate,
-          irrfValue: irrf.irrfValue,
+          irrfRate,
+          irrfValue,
         });
 
         annualGross += monthData.gross;
@@ -166,7 +174,7 @@ export async function GET(request: NextRequest) {
         annualNet += monthData.net;
         annualMaintenance += maintenanceCost;
         annualTaxable += taxableIncome;
-        annualIrrf += irrf.irrfValue;
+        annualIrrf += irrfValue;
       }
 
       properties.push({

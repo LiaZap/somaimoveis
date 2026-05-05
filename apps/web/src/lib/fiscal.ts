@@ -29,6 +29,33 @@ export function calculateIRRF(monthlyTaxableIncome: number) {
   };
 }
 
+/**
+ * Calcula IRRF apenas se houver retencao na fonte aplicavel.
+ *
+ * Regra fiscal de aluguel (RFB):
+ * - SO ha retencao IRRF quando o LOCADOR eh PF (Pessoa Fisica) e o
+ *   LOCATARIO eh PJ (Pessoa Juridica). A PJ retem na fonte e recolhe
+ *   pra Receita.
+ * - Locador PJ → recebe valor cheio, declara como receita propria.
+ * - Locador PF + Locatario PF → sem retencao na fonte (LeacarioPF
+ *   declara o aluguel pago no IRPF, locador declara como recebido).
+ * - Aliquota efetiva conforme tabela progressiva.
+ *
+ * Retorna 0 quando nao se aplica.
+ */
+export function calculateIRRFRental(params: {
+  grossToOwner: number;
+  ownerType: "PF" | "PJ" | string | null | undefined;
+  tenantType: "PF" | "PJ" | string | null | undefined;
+}): ReturnType<typeof calculateIRRF> {
+  const ownerIsPF = (params.ownerType || "PF").toUpperCase() === "PF";
+  const tenantIsPJ = (params.tenantType || "PF").toUpperCase() === "PJ";
+  if (!ownerIsPF || !tenantIsPJ) {
+    return { taxableAmount: 0, rate: 0, deduction: 0, irrfValue: 0 };
+  }
+  return calculateIRRF(params.grossToOwner);
+}
+
 export interface FiscalMonthRow {
   month: number;
   label: string;

@@ -19,8 +19,23 @@ export async function GET(request: NextRequest) {
     const month = searchParams.get("month");
     const year = searchParams.get("year");
 
+    // Co-proprietarios: incluir tambem pagamentos de imoveis em que o owner
+    // aparece como PropertyOwner (mesmo nao sendo ownerId direto do contrato).
+    const propertyShares = await prisma.propertyOwner.findMany({
+      where: { ownerId },
+      select: { propertyId: true },
+    });
+    const sharedPropertyIds = propertyShares.map((s) => s.propertyId);
+
     // Construir filtros
-    const where: Record<string, unknown> = { ownerId };
+    const where: Record<string, unknown> = {
+      OR: [
+        { ownerId },
+        ...(sharedPropertyIds.length > 0
+          ? [{ contract: { propertyId: { in: sharedPropertyIds } } }]
+          : []),
+      ],
+    };
 
     if (status && status !== "all") {
       where.status = status;
@@ -60,9 +75,16 @@ export async function GET(request: NextRequest) {
       orderBy: { dueDate: "desc" },
     });
 
-    // Buscar todos os pagamentos do proprietario para calcular resumo geral
+    // Buscar todos os pagamentos para calcular resumo geral (proprio + co-owner)
     const allPayments = await prisma.payment.findMany({
-      where: { ownerId },
+      where: {
+        OR: [
+          { ownerId },
+          ...(sharedPropertyIds.length > 0
+            ? [{ contract: { propertyId: { in: sharedPropertyIds } } }]
+            : []),
+        ],
+      },
       select: {
         status: true,
         value: true,

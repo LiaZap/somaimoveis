@@ -25,9 +25,21 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Proprietario nao encontrado" }, { status: 404 });
     }
 
+    // Inclui imoveis em que o owner eh co-proprietario via PropertyOwner
+    const propertyShares = await prisma.propertyOwner.findMany({
+      where: { ownerId },
+      select: { propertyId: true },
+    });
+    const sharedPropertyIds = propertyShares.map((s) => s.propertyId);
+
     const payments = await prisma.payment.findMany({
       where: {
-        ownerId,
+        OR: [
+          { ownerId },
+          ...(sharedPropertyIds.length > 0
+            ? [{ contract: { propertyId: { in: sharedPropertyIds } } }]
+            : []),
+        ],
         status: "PAGO",
         paidAt: {
           gte: new Date(year, 0, 1),
@@ -44,9 +56,14 @@ export async function GET(request: NextRequest) {
       orderBy: { paidAt: "asc" },
     });
 
-    // Manutencoes
+    // Manutencoes — inclui imoveis em que owner eh co-proprietario
     const ownerProperties = await prisma.property.findMany({
-      where: { ownerId },
+      where: {
+        OR: [
+          { ownerId },
+          ...(sharedPropertyIds.length > 0 ? [{ id: { in: sharedPropertyIds } }] : []),
+        ],
+      },
       select: { id: true },
     });
     const propertyIds = ownerProperties.map((p) => p.id);
@@ -76,7 +93,7 @@ export async function GET(request: NextRequest) {
       {
         id: string;
         title: string;
-        months: Map<number, { gross: number; admin: number; net: number }>;
+        months: Map<number, { gross: number; admin: number; net: number; irrf: number }>;
       }
     >();
 
@@ -93,7 +110,7 @@ export async function GET(request: NextRequest) {
       const month = paidDate.getMonth();
 
       if (!prop.months.has(month)) {
-        prop.months.set(month, { gross: 0, admin: 0, net: 0 });
+        prop.months.set(month, { gross: 0, admin: 0, net: 0, irrf: 0 });
       }
 
       const monthData = prop.months.get(month)!;
@@ -105,9 +122,11 @@ export async function GET(request: NextRequest) {
       monthData.gross += paidValue;
       monthData.admin += splitAdmin;
       monthData.net += splitOwner;
+      // IRRF do pagamento real (gravado pelo billing). Reflete o que foi
+      // efetivamente retido — nao recalcula.
+      (monthData as any).irrf = ((monthData as any).irrf || 0) + (payment.irrfValue || 0);
     }
 
-    const isPF = owner.personType === "PF";
     const properties: FiscalPropertySummary[] = [];
 
     for (const [propId, propData] of propertyMap) {
@@ -116,12 +135,13 @@ export async function GET(request: NextRequest) {
       let annualMaintenance = 0, annualTaxable = 0, annualIrrf = 0;
 
       for (let m = 0; m < 12; m++) {
-        const monthData = propData.months.get(m);
+        const monthData = propData.months.get(m) as { gross: number; admin: number; net: number; irrf?: number } | undefined;
         if (!monthData) continue;
 
         const maintenanceCost = maintenanceMap.get(`${propId}-${m}`) || 0;
         const taxableIncome = Math.max(0, monthData.net - maintenanceCost);
-        const irrf = isPF ? calculateIRRF(taxableIncome) : { rate: 0, irrfValue: 0 };
+        const irrfValue = Math.round((monthData.irrf || 0) * 100) / 100;
+        const irrfRate = taxableIncome > 0 ? irrfValue / taxableIncome : 0;
 
         months.push({
           month: m + 1,
@@ -131,8 +151,8 @@ export async function GET(request: NextRequest) {
           netToOwner: Math.round(monthData.net * 100) / 100,
           maintenanceCost: Math.round(maintenanceCost * 100) / 100,
           taxableIncome: Math.round(taxableIncome * 100) / 100,
-          irrfRate: irrf.rate,
-          irrfValue: irrf.irrfValue,
+          irrfRate,
+          irrfValue,
         });
 
         annualGross += monthData.gross;
@@ -140,7 +160,7 @@ export async function GET(request: NextRequest) {
         annualNet += monthData.net;
         annualMaintenance += maintenanceCost;
         annualTaxable += taxableIncome;
-        annualIrrf += irrf.irrfValue;
+        annualIrrf += irrfValue;
       }
 
       properties.push({

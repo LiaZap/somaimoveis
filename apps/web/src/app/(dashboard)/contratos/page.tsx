@@ -490,6 +490,7 @@ function ContratosContent() {
                     <TableHead className="text-xs">Código</TableHead>
                     <TableHead className="text-xs">Imóvel</TableHead>
                     <TableHead className="text-xs">Locatário</TableHead>
+                    <TableHead className="text-xs">Proprietário</TableHead>
                     <TableHead className="text-xs">Valor Aluguel</TableHead>
                     <TableHead className="text-xs">Vigencia</TableHead>
                     <TableHead className="text-xs">Status</TableHead>
@@ -529,6 +530,11 @@ function ContratosContent() {
                         <TableCell className="text-xs max-w-[250px]">
                           <span className="block truncate" title={contract.tenant?.name || "N/A"}>
                             {contract.tenant?.name || "N/A"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[250px]">
+                          <span className="block truncate" title={contract.owner?.name || "N/A"}>
+                            {contract.owner?.name || "N/A"}
                           </span>
                         </TableCell>
                         <TableCell className="text-xs font-medium">

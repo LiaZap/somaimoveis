@@ -43,8 +43,28 @@ export async function GET(request: NextRequest) {
 
     const year = searchParams.get("year");
 
-    // Filtros
-    const where: Record<string, unknown> = { ownerId };
+    // Achar contratos onde o owner atual eh DIRETO (ownerId) ou
+    // CO-PROPRIETARIO via PropertyOwner. Manoela e Gabriel, por exemplo,
+    // sao co-proprietarios sem ser ownerId principal — precisam aparecer.
+    const propertyShares = await prisma.propertyOwner.findMany({
+      where: { ownerId },
+      select: { propertyId: true, percentage: true },
+    });
+    const sharedPropertyIds = propertyShares.map((s) => s.propertyId);
+    const shareByProperty = new Map(
+      propertyShares.map((s) => [s.propertyId, s.percentage]),
+    );
+
+    // Filtros base — pagamentos cujo contrato tem o owner direto OU cujo
+    // imovel tem co-ownership do owner atual.
+    const where: Record<string, unknown> = {
+      OR: [
+        { ownerId },
+        ...(sharedPropertyIds.length > 0
+          ? [{ contract: { propertyId: { in: sharedPropertyIds } } }]
+          : []),
+      ],
+    };
 
     if (year) {
       const y = parseInt(year, 10);
@@ -54,13 +74,13 @@ export async function GET(request: NextRequest) {
       };
     }
 
-    // Buscar todos os pagamentos do proprietario
+    // Buscar todos os pagamentos
     const payments = await prisma.payment.findMany({
       where,
       include: {
         contract: {
           include: {
-            property: { select: { title: true } },
+            property: { select: { id: true, title: true } },
           },
         },
         tenant: { select: { name: true } },
@@ -102,10 +122,21 @@ export async function GET(request: NextRequest) {
       // Calcular split se nao estiver preenchido
       const adminFeePercent = payment.contract.adminFeePercent ?? 10;
       const paidValue = payment.paidValue ?? payment.value;
-      const splitAdmin =
+      const splitAdminTotal =
         payment.splitAdminValue ?? paidValue * (adminFeePercent / 100);
-      const splitOwner =
-        payment.splitOwnerValue ?? paidValue - splitAdmin;
+      const splitOwnerTotal =
+        payment.splitOwnerValue ?? paidValue - splitAdminTotal;
+
+      // Se o owner atual eh CO-PROPRIETARIO (nao ownerId direto do contrato),
+      // aplica o share% pra mostrar so a parte que cabe a ele.
+      const propId = payment.contract.property?.id;
+      const isPrincipalOwner = payment.ownerId === ownerId;
+      const sharePercent = !isPrincipalOwner && propId
+        ? (shareByProperty.get(propId) ?? 0)
+        : 100;
+      const shareFactor = sharePercent / 100;
+      const splitAdmin = Math.round(splitAdminTotal * shareFactor * 100) / 100;
+      const splitOwner = Math.round(splitOwnerTotal * shareFactor * 100) / 100;
 
       group.payments.push({
         id: payment.id,
@@ -122,9 +153,11 @@ export async function GET(request: NextRequest) {
         tenant: payment.tenant?.name || "N/A",
       });
 
-      group.totals.totalValue += payment.value;
+      // Totais respeitam o share% do owner atual (co-proprietario ve apenas
+      // a parte dele).
+      group.totals.totalValue += payment.value * shareFactor;
       if (payment.status === "PAGO") {
-        group.totals.totalPaid += paidValue;
+        group.totals.totalPaid += paidValue * shareFactor;
         group.totals.totalOwner += splitOwner;
         group.totals.totalAdmin += splitAdmin;
       }

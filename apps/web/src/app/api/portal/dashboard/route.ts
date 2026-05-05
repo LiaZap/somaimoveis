@@ -14,44 +14,76 @@ export async function GET(request: NextRequest) {
   try {
     const { ownerId } = auth;
 
-    // Total de imoveis do proprietario
+    // Inclui imoveis em que o owner eh co-proprietario via PropertyOwner
+    const propertyShares = await prisma.propertyOwner.findMany({
+      where: { ownerId },
+      select: { propertyId: true, percentage: true },
+    });
+    const sharedPropertyIds = propertyShares.map((s) => s.propertyId);
+
+    // Total de imoveis do proprietario (direto + co-proprietario)
     const totalProperties = await prisma.property.count({
-      where: { ownerId, active: true },
+      where: {
+        active: true,
+        OR: [
+          { ownerId },
+          ...(sharedPropertyIds.length > 0 ? [{ id: { in: sharedPropertyIds } }] : []),
+        ],
+      },
     });
 
-    // Contratos ativos
+    // Contratos ativos (direto + co-proprietario via property)
+    const contractFilter = {
+      status: "ATIVO",
+      OR: [
+        { ownerId },
+        ...(sharedPropertyIds.length > 0 ? [{ propertyId: { in: sharedPropertyIds } }] : []),
+      ],
+    };
     const activeContracts = await prisma.contract.count({
-      where: { ownerId, status: "ATIVO" },
+      where: contractFilter,
     });
 
-    // Renda mensal total (soma dos valores de aluguel dos contratos ativos)
+    // Renda mensal total — aplicando share% pra co-proprietarios
     const activeContractsList = await prisma.contract.findMany({
-      where: { ownerId, status: "ATIVO" },
-      select: { rentalValue: true, adminFeePercent: true },
+      where: contractFilter,
+      select: { rentalValue: true, adminFeePercent: true, ownerId: true, propertyId: true },
     });
 
-    const totalMonthlyIncome = activeContractsList.reduce(
-      (sum, c) => sum + c.rentalValue,
-      0
+    const shareByProperty = new Map(
+      propertyShares.map((s) => [s.propertyId, s.percentage]),
     );
 
-    const totalMonthlyOwnerIncome = activeContractsList.reduce(
-      (sum, c) => sum + c.rentalValue * (1 - c.adminFeePercent / 100),
-      0
-    );
+    const totalMonthlyIncome = activeContractsList.reduce((sum, c) => {
+      const share = c.ownerId === ownerId ? 100 : (shareByProperty.get(c.propertyId || "") || 0);
+      return sum + c.rentalValue * (share / 100);
+    }, 0);
+
+    const totalMonthlyOwnerIncome = activeContractsList.reduce((sum, c) => {
+      const share = c.ownerId === ownerId ? 100 : (shareByProperty.get(c.propertyId || "") || 0);
+      return sum + c.rentalValue * (1 - c.adminFeePercent / 100) * (share / 100);
+    }, 0);
 
     // Pagamentos pendentes e atrasados
+    const paymentFilter = {
+      OR: [
+        { ownerId },
+        ...(sharedPropertyIds.length > 0
+          ? [{ contract: { propertyId: { in: sharedPropertyIds } } }]
+          : []),
+      ],
+    };
     const pendingPayments = await prisma.payment.count({
-      where: { ownerId, status: "PENDENTE" },
+      where: { ...paymentFilter, status: "PENDENTE" },
     });
 
     const overduePayments = await prisma.payment.count({
-      where: { ownerId, status: "ATRASADO" },
+      where: { ...paymentFilter, status: "ATRASADO" },
     });
 
     // Ultimos 5 pagamentos
     const recentPayments = await prisma.payment.findMany({
-      where: { ownerId },
+      where: paymentFilter,
       include: {
         contract: {
           include: {

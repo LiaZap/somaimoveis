@@ -25,21 +25,22 @@ export async function GET(request: NextRequest) {
         where.guaranteeType = guaranteeType;
       }
     }
-    // Busca focada nas colunas visiveis da tabela: codigo, locatario, imovel.
-    // Nao inclui o nome do proprietario porque ele nao aparece na tabela —
-    // incluiria seria confuso (apareceriam contratos de locatarios sem
-    // relacao com o nome buscado).
+    // Busca abrangente — locatario, proprietario, codigo, imovel, endereco.
+    // Inclui owner.name pois muitos usuarios buscam contratos pelo nome do
+    // proprietario do imovel.
     const searchWhere = buildSearchWhere(
       search,
       [
         "code",
         "tenant.name",
         "tenant.cpfCnpj",
+        "owner.name",
+        "owner.cpfCnpj",
         "property.title",
         "property.street",
         "property.neighborhood",
       ],
-      { numericFields: ["tenant.cpfCnpj"] },
+      { numericFields: ["tenant.cpfCnpj", "owner.cpfCnpj"] },
     );
     if (searchWhere) {
       // Combina com filtro de garantia (que ja pode estar em where.OR)

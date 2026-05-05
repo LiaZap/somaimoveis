@@ -16,7 +16,19 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
 
-    const where: Record<string, unknown> = { ownerId };
+    // Inclui contratos cujo imovel tem co-ownership do owner atual
+    const propertyShares = await prisma.propertyOwner.findMany({
+      where: { ownerId },
+      select: { propertyId: true },
+    });
+    const sharedPropertyIds = propertyShares.map((s) => s.propertyId);
+
+    const where: Record<string, unknown> = {
+      OR: [
+        { ownerId },
+        ...(sharedPropertyIds.length > 0 ? [{ propertyId: { in: sharedPropertyIds } }] : []),
+      ],
+    };
     if (status && status !== "all") {
       where.status = status;
     }

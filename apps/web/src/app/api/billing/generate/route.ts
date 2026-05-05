@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, isAuthError } from "@/lib/api-auth";
-import { calculateIRRF } from "@/lib/fiscal";
+import { calculateIRRFRental } from "@/lib/fiscal";
 import { nextBusinessDay } from "@/lib/business-days";
 
 export async function POST(request: NextRequest) {
@@ -77,8 +77,8 @@ export async function POST(request: NextRequest) {
             iptuValue: true,
           },
         },
-        tenant: { select: { name: true } },
-        owner: { select: { name: true } },
+        tenant: { select: { name: true, personType: true } },
+        owner: { select: { name: true, personType: true } },
       },
     });
 
@@ -366,7 +366,13 @@ export async function POST(request: NextRequest) {
         // Condominio, IPTU and other fees are NOT included in the IRRF base,
         // since grossToOwner = rentalValue - adminFee (does not include condoFee or iptuMonthly).
         const grossToOwner = splitOwnerValue;
-        const irrf = calculateIRRF(grossToOwner);
+        // IRRF SO se aplica quando locador eh PF e locatario eh PJ.
+        // Caso contrario nao ha retencao na fonte (Receita Federal).
+        const irrf = calculateIRRFRental({
+          grossToOwner,
+          ownerType: (contract as any).owner?.personType || "PF",
+          tenantType: (contract as any).tenant?.personType || "PF",
+        });
         const irrfValue = irrf.irrfValue;
         const irrfRate = irrf.rate;
         const netToOwner = Math.round((grossToOwner - irrfValue) * 100) / 100;
