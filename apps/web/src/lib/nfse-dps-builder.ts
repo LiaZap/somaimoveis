@@ -108,21 +108,28 @@ export function buildDpsXml(params: DpsParams): { xml: string; idDps: string } {
 
   const tpAmb = params.ambiente === "PRODUCAO" ? "1" : "2";
 
-  // ID da DPS no padrao Sefin Nacional v1.6 (pattern: DPS\d{41}, 44 chars).
-  // Estrutura DECODIFICADA de XML real funcionando:
-  //   DPS + cMun(7) + tpEmit(1) + CNPJ(14) + serie(5) + nDPS(14)
-  // Total: 3 + 41 = 44 caracteres
-  // tpEmit constante "2" para emissor por aplicativo (vs "1" emissor web).
-  // serie deve comecar com digito nao-zero (Paulo usa "70000").
+  // ID da DPS no padrao Sefin Nacional v1.01 (pattern: DPS\d{42}, 45 chars).
+  // Estrutura VALIDADA contra XML real autorizado pelo EmissorWeb:
+  //   DPS + cMun(7) + tpEmit(1) + CNPJ(14) + serie(5) + nDPS(15)
+  // Total: 3 + 42 = 45 caracteres
+  //
+  // Exemplo real funcionando:
+  //   DPS411370025041074700019670000000000000000013 (45 chars)
+  //   - cMun "4113700" (Londrina)
+  //   - tpEmit "2" (CNPJ — tipo de inscricao)
+  //   - CNPJ "50410747000196"
+  //   - serie "70000" (precisa comecar com nao-zero)
+  //   - nDPS "000000000000013" (15 digitos com zero a esquerda)
   const cMun = onlyDigits(params.codigoMunicipioEmissao).padStart(7, "0").substring(0, 7);
-  const tpEmit = "2"; // 2 = emissor por aplicativo / contribuinte direto
-  const nInsc = onlyDigits(prestador.cnpj).padStart(14, "0");
+  const tpEmit = "2"; // 2 = CNPJ (tipo de inscricao do emissor)
+  const nInsc = onlyDigits(prestador.cnpj).padStart(14, "0").substring(0, 14);
   // Serie default "70000" — precisa comecar com digito nao-zero pra evitar
   // pattern fail. Vai ser configuravel depois.
   let serieRaw = onlyDigits(params.numeroSerie);
   if (!serieRaw || serieRaw.startsWith("0")) serieRaw = "70000";
   const serieStr = serieRaw.padStart(5, "0").substring(0, 5);
-  const nDPSStr = String(params.numeroDps).padStart(14, "0").substring(0, 14);
+  // nDPS DEVE ter 15 digitos (com zeros a esquerda) pro pattern do schema
+  const nDPSStr = String(params.numeroDps).padStart(15, "0").substring(0, 15);
   const idDps = `DPS${cMun}${tpEmit}${nInsc}${serieStr}${nDPSStr}`;
   const dhEmi = formatDateIso(params.dhEmissao);
   const dCompet = params.competencia.split("T")[0];
