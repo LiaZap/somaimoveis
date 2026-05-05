@@ -106,11 +106,21 @@ export interface ServicoData {
 export function buildDpsXml(params: DpsParams): { xml: string; idDps: string } {
   const { prestador, tomador, servico } = params;
 
-  // ID unico da DPS (formato: "DPS-{cnpj}-{serie}-{numero}-{timestamp}")
-  // Maximo 50 chars, comeca com letra, sem espacos
-  const idDps = `DPS${prestador.cnpj}${params.numeroSerie}${String(params.numeroDps).padStart(15, "0")}`.substring(0, 50);
-
   const tpAmb = params.ambiente === "PRODUCAO" ? "1" : "2";
+
+  // ID da DPS no padrao Sefin Nacional:
+  //   "DPS" + cMun(7) + AAMM(4) + tpInsc(1) + nInsc(14) + tpAmb(1) + tpEmis(1) + nDPS(15) + cDV(1)
+  // Total: 3 + 44 = 47 caracteres
+  const cMun = onlyDigits(params.codigoMunicipioEmissao).padStart(7, "0").substring(0, 7);
+  const dt = params.dhEmissao;
+  const aamm = `${String(dt.getFullYear() % 100).padStart(2, "0")}${String(dt.getMonth() + 1).padStart(2, "0")}`;
+  const tpInsc = "1"; // CNPJ
+  const nInsc = onlyDigits(prestador.cnpj).padStart(14, "0");
+  const tpEmis = "1";
+  const nDPSStr = String(params.numeroDps).padStart(15, "0");
+  const idPartial = cMun + aamm + tpInsc + nInsc + tpAmb + tpEmis + nDPSStr;
+  const cDV = calcMod11DV(idPartial);
+  const idDps = `DPS${idPartial}${cDV}`;
   const dhEmi = formatDateIso(params.dhEmissao);
   const dCompet = params.competencia.split("T")[0];
 
@@ -225,6 +235,25 @@ function formatDateIso(d: Date): string {
 
 function onlyDigits(s: string): string {
   return s.replace(/\D/g, "");
+}
+
+/**
+ * Calcula o digito verificador modulo 11 (padrao Receita Federal)
+ * para a chave de acesso da DPS. Pesos 2-9 ciclicos da direita pra esquerda.
+ * Resultado: '0' se DV = 10 ou 11, senao o digito calculado.
+ */
+function calcMod11DV(s: string): string {
+  const digits = s.replace(/\D/g, "");
+  const weights = [2, 3, 4, 5, 6, 7, 8, 9];
+  let sum = 0;
+  let widx = 0;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    sum += parseInt(digits[i], 10) * weights[widx];
+    widx = (widx + 1) % weights.length;
+  }
+  const remainder = sum % 11;
+  const dv = 11 - remainder;
+  return dv >= 10 ? "0" : String(dv);
 }
 
 function escapeXml(s: string): string {
