@@ -41,12 +41,37 @@ async function audit(request: NextRequest, apply: boolean) {
       contractId: true,
       contract: {
         select: {
-          owner: { select: { id: true, name: true, personType: true } },
-          tenant: { select: { id: true, name: true, personType: true } },
+          owner: {
+            select: { id: true, name: true, cpfCnpj: true, personType: true },
+          },
+          tenant: {
+            select: { id: true, name: true, cpfCnpj: true, personType: true },
+          },
         },
       },
     },
   });
+
+  /**
+   * Detecta PF ou PJ. Primeiro pelo personType explicito; se nulo,
+   * inferimos pela quantidade de digitos do CPF/CNPJ:
+   *   - 11 digitos -> CPF -> PF
+   *   - 14 digitos -> CNPJ -> PJ
+   *   - outros -> assume PF (default seguro)
+   */
+  function detectPersonType(
+    personType: string | null | undefined,
+    cpfCnpj: string | null | undefined,
+  ): { type: "PF" | "PJ"; source: "personType" | "doc-length" | "default" } {
+    if (personType) {
+      const t = personType.toUpperCase();
+      if (t === "PF" || t === "PJ") return { type: t, source: "personType" };
+    }
+    const digits = (cpfCnpj || "").replace(/\D/g, "");
+    if (digits.length === 14) return { type: "PJ", source: "doc-length" };
+    if (digits.length === 11) return { type: "PF", source: "doc-length" };
+    return { type: "PF", source: "default" };
+  }
 
   type IncorrectItem = {
     paymentId: string;
@@ -54,8 +79,12 @@ async function audit(request: NextRequest, apply: boolean) {
     irrfValue: number;
     ownerName: string;
     ownerType: string;
+    ownerDoc: string;
+    ownerDetectionSource: string;
     tenantName: string;
     tenantType: string;
+    tenantDoc: string;
+    tenantDetectionSource: string;
     motivo: string;
     paidAt: string | null;
   };
@@ -63,26 +92,37 @@ async function audit(request: NextRequest, apply: boolean) {
   const incorrect: IncorrectItem[] = [];
 
   for (const p of payments) {
-    const ownerType = (p.contract?.owner?.personType || "PF").toUpperCase();
-    const tenantType = (p.contract?.tenant?.personType || "PF").toUpperCase();
-    const ownerIsPF = ownerType === "PF";
-    const tenantIsPJ = tenantType === "PJ";
+    const ownerInfo = detectPersonType(
+      p.contract?.owner?.personType,
+      p.contract?.owner?.cpfCnpj,
+    );
+    const tenantInfo = detectPersonType(
+      p.contract?.tenant?.personType,
+      p.contract?.tenant?.cpfCnpj,
+    );
+
+    const ownerIsPF = ownerInfo.type === "PF";
+    const tenantIsPJ = tenantInfo.type === "PJ";
 
     // Regra correta: IRRF so quando owner=PF E tenant=PJ
-    if (ownerIsPF && tenantIsPJ) continue; // OK, mantem
+    if (ownerIsPF && tenantIsPJ) continue;
 
     let motivo = "";
-    if (!ownerIsPF) motivo = `Owner eh PJ (${p.contract?.owner?.name}) — sem retencao na fonte`;
-    else motivo = `Tenant eh PF (${p.contract?.tenant?.name}) — sem retencao na fonte`;
+    if (!ownerIsPF) motivo = `Locador eh PJ — sem retencao na fonte (PJ recebe valor cheio)`;
+    else motivo = `Locatario eh PF — sem retencao na fonte (PF nao retem aluguel)`;
 
     incorrect.push({
       paymentId: p.id,
       code: p.code,
       irrfValue: p.irrfValue ?? 0,
       ownerName: p.contract?.owner?.name || "?",
-      ownerType,
+      ownerType: ownerInfo.type,
+      ownerDoc: p.contract?.owner?.cpfCnpj || "",
+      ownerDetectionSource: ownerInfo.source,
       tenantName: p.contract?.tenant?.name || "?",
-      tenantType,
+      tenantType: tenantInfo.type,
+      tenantDoc: p.contract?.tenant?.cpfCnpj || "",
+      tenantDetectionSource: tenantInfo.source,
       motivo,
       paidAt: p.paidAt?.toISOString() || null,
     });
@@ -96,11 +136,11 @@ async function audit(request: NextRequest, apply: boolean) {
     const limited = isFinite(limit) && limit > 0 ? Math.min(limit, 1000) : 50;
 
     // Agrupar por proprietario pra facilitar conferencia
-    const byOwner = new Map<string, { name: string; type: string; count: number; total: number }>();
+    const byOwner = new Map<string, { name: string; type: string; doc: string; count: number; total: number }>();
     for (const x of incorrect) {
       const key = x.ownerName + "|" + x.ownerType;
       if (!byOwner.has(key)) {
-        byOwner.set(key, { name: x.ownerName, type: x.ownerType, count: 0, total: 0 });
+        byOwner.set(key, { name: x.ownerName, type: x.ownerType, doc: x.ownerDoc, count: 0, total: 0 });
       }
       const g = byOwner.get(key)!;
       g.count++;
@@ -110,12 +150,24 @@ async function audit(request: NextRequest, apply: boolean) {
       .map((g) => ({ ...g, total: Math.round(g.total * 100) / 100 }))
       .sort((a, b) => b.total - a.total);
 
+    // Estatisticas de tipo de erro
+    const ownerEhPJ = incorrect.filter((x) => x.ownerType === "PJ").length;
+    const tenantEhPF = incorrect.filter((x) => x.tenantType === "PF" && x.ownerType === "PF").length;
+    const detectadoPorDoc = incorrect.filter(
+      (x) => x.ownerDetectionSource === "doc-length" || x.tenantDetectionSource === "doc-length",
+    ).length;
+
     return NextResponse.json({
       mode: "DRY_RUN",
       totalPagamentosComIrrf: payments.length,
       totalCorretos: payments.length - incorrect.length,
       totalIncorretos: incorrect.length,
       totalIrrfIncorreto: Math.round(totalIrrfIncorreto * 100) / 100,
+      breakdown: {
+        ownerEhPJ,                       // owner CNPJ — IRRF incabivel
+        tenantEhPF_ownerPF: tenantEhPF,  // PF -> PF — IRRF incabivel
+        detectadoPorDocumento: detectadoPorDoc, // detectado pela qty de digitos
+      },
       resumoPorOwner,
       incorretos: incorrect.slice(0, limited),
       truncated: incorrect.length > limited,
