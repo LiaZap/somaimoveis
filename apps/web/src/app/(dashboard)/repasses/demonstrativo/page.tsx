@@ -37,7 +37,7 @@ interface ContratoGroup {
 }
 
 interface DemonstrativoData {
-  periodo: { start: string; end: string; month: string };
+  periodo: { start: string; end: string; month: string; mesReferencia?: string; mesVencimento?: string };
   empresa: { nome: string; cnpj: string };
   proprietario: {
     id: string;
@@ -162,6 +162,10 @@ function RelatorioContent() {
         <div className="titulo-block">
           <div className="titulo">Demonstrativo de Pagamentos</div>
           <div className="periodo">
+            Mes Referencia: {data.periodo.mesReferencia || data.periodo.month}
+            {data.periodo.mesVencimento ? ` (Venc: ${data.periodo.mesVencimento})` : ""}
+          </div>
+          <div style={{ fontSize: "10px", fontWeight: 400 }}>
             Periodo: {data.periodo.start} a {data.periodo.end}
           </div>
         </div>

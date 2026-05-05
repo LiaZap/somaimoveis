@@ -98,8 +98,15 @@ export async function GET(request: NextRequest) {
 
     for (const payment of payments) {
       const dueDate = new Date(payment.dueDate);
-      const m = dueDate.getMonth();
-      const y = dueDate.getFullYear();
+      // Agrupa por MES DE REFERENCIA do aluguel (= mes anterior ao vencimento,
+      // ja que cobranca eh in-arrears). Boleto vencendo em maio = aluguel
+      // referente a abril → aparece no grupo "Abril".
+      let m = dueDate.getMonth() - 1;
+      let y = dueDate.getFullYear();
+      if (m < 0) {
+        m = 11;
+        y -= 1;
+      }
       const key = `${y}-${String(m + 1).padStart(2, "0")}`;
 
       if (!monthsMap.has(key)) {

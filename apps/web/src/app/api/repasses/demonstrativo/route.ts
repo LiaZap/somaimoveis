@@ -33,20 +33,37 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "ownerId obrigatorio" }, { status: 400 });
     }
 
-    let targetYear: number, targetMonth: number;
+    // O parametro `month` agora eh interpretado como MES DE REFERENCIA
+    // do aluguel (= mes em que o locatario morou). Como a cobranca eh
+    // in-arrears, os boletos efetivamente cobrados/pagos vencem no MES
+    // SEGUINTE (refMonth + 1).
+    //
+    // Ex: month=2026-04 (referencia abril) → boletos com dueDate em maio.
+    //     Demonstrativo mostra "Mes Referencia: 04/2026".
+    let refYear: number, refMonth: number;
     if (monthStr && /^\d{4}-\d{2}$/.test(monthStr)) {
       const [y, m] = monthStr.split("-").map(Number);
-      targetYear = y;
-      targetMonth = m - 1;
+      refYear = y;
+      refMonth = m - 1;
     } else {
+      // Default: mes anterior (referente)
       const now = new Date();
-      targetYear = now.getFullYear();
-      targetMonth = now.getMonth();
+      refYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+      refMonth = (now.getMonth() + 11) % 12;
+    }
+
+    // targetMonth = refMonth + 1 (mes do vencimento dos boletos)
+    let targetYear = refYear;
+    let targetMonth = refMonth + 1;
+    if (targetMonth > 11) {
+      targetMonth = 0;
+      targetYear += 1;
     }
 
     const monthStart = new Date(targetYear, targetMonth, 1);
     const monthEnd = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59, 999);
-    const mLabel = `${String(targetMonth + 1).padStart(2, "0")}/${targetYear}`;
+    // Label mostra o mes de REFERENCIA (= mes do aluguel cobrado)
+    const mLabel = `${String(refMonth + 1).padStart(2, "0")}/${refYear}`;
     const periodStart = monthStart.toLocaleDateString("pt-BR", { timeZone: "UTC" });
     const periodEnd = monthEnd.toLocaleDateString("pt-BR", { timeZone: "UTC" });
 
@@ -624,7 +641,13 @@ export async function GET(request: NextRequest) {
       : "-";
 
     return NextResponse.json({
-      periodo: { start: periodStart, end: periodEnd, month: mLabel },
+      periodo: {
+        start: periodStart,
+        end: periodEnd,
+        month: mLabel,           // Mes de REFERENCIA (aluguel cobrado)
+        mesReferencia: mLabel,
+        mesVencimento: `${String(targetMonth + 1).padStart(2, "0")}/${targetYear}`,
+      },
       empresa: {
         nome: "Somma Imoveis Ltda",
         cnpj: "40.528.068/0001-62",
