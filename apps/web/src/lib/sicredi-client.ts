@@ -241,30 +241,48 @@ export async function sicrediCreateBoleto(
     ...(params.mensagens && { mensagens: params.mensagens }),
   };
 
-  // Sicredi v1 cobranca/boleto: formato correto pra multa/juros
-  // (descoberto via Postman collection oficial em 06/05/2026):
+  // Sicredi v1 cobranca/boleto: multa/juros como NUMBER direto +
+  // tipo* em campo separado (descoberto via Postman collection
+  // oficial 06/05/2026).
   //
-  //   ✓ "multa": 5.29,            // NUMBER direto (nao objeto)
-  //     "tipoMulta": "PERCENTUAL", // campo separado
-  //     "juros": 5.32,             // NUMBER direto
-  //     "tipoJuros": "VALOR"       // campo separado
+  // tipoMulta: aceita "VALOR" | "PERCENTUAL"
+  // tipoJuros: aceita SOMENTE "VALOR" | "PERCENTUAL"
+  //   (testado: PERCENTUAL_MES retorna 400 "deve ser VALOR ou PERCENTUAL")
   //
-  //   ✗ "multa": { tipo: "PERCENTUAL", valor: 2 } -> rejeitado
-  //
-  // tipoMulta: "VALOR" | "PERCENTUAL"
-  // tipoJuros: "VALOR" | "PERCENTUAL_DIA" | "PERCENTUAL_MES" | "ISENTO"
-  //
-  // Sicredi aceita multa percentual acima de 2% (exemplo da propria
-  // collection oficial usa 5.29%). O limite legal de 2% (CDC art.52§1)
-  // eh discussao juridica entre Somma e cliente; banco nao valida.
+  // Conversao do BillingSettings (que tem "PERCENTUAL_MES", etc) pra
+  // o formato Sicredi. Assumimos que Sicredi PERCENTUAL = mensal, e
+  // VALOR = R$/dia (padrao CNAB).
   if (params.multa && params.multa.valor > 0) {
     body.multa = params.multa.valor;
-    body.tipoMulta = params.multa.tipo;
+    body.tipoMulta = params.multa.tipo; // VALOR ou PERCENTUAL — direto
   }
 
-  if (params.juros && params.juros.valor > 0) {
-    body.juros = params.juros.valor;
-    body.tipoJuros = params.juros.tipo;
+  if (
+    params.juros &&
+    params.juros.valor > 0 &&
+    params.juros.tipo !== "ISENTO"
+  ) {
+    let tipoJuros: "VALOR" | "PERCENTUAL";
+    let valorJuros = params.juros.valor;
+    switch (params.juros.tipo) {
+      case "PERCENTUAL_MES":
+        // valor mensal direto — Sicredi entende como % ao mes
+        tipoJuros = "PERCENTUAL";
+        break;
+      case "PERCENTUAL_DIA":
+        // converte pra equivalente mensal (Sicredi PERCENTUAL = mes)
+        tipoJuros = "PERCENTUAL";
+        valorJuros = params.juros.valor * 30;
+        break;
+      case "VALOR_DIA":
+        // valor por dia — Sicredi VALOR = R$/dia (padrao CNAB)
+        tipoJuros = "VALOR";
+        break;
+      default:
+        tipoJuros = "VALOR";
+    }
+    body.juros = valorJuros;
+    body.tipoJuros = tipoJuros;
   }
 
   // Validade pos-vencimento do PIX cobv (dias que o pagamento ainda eh aceito)
