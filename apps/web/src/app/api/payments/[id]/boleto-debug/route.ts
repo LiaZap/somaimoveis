@@ -124,6 +124,30 @@ export async function POST(
       d2.setDate(d2.getDate() + 1);
       params2.juros = { tipo: "PERCENTUAL_MES", valor: 1, data: formatDate(d2) };
       break;
+    case "multa-valor-string":
+      (params2 as any).multa = { tipo: "PERCENTUAL", valor: "2.00" };
+      break;
+    case "multa-codigo":
+      (params2 as any).multa = { codigo: "PERCENTUAL", valor: 2 };
+      break;
+    case "multa-codigo-num":
+      (params2 as any).multa = { codigo: 3, valor: 2 };
+      break;
+    case "multa-tipo-num":
+      (params2 as any).multa = { tipo: 3, valor: 2 };
+      break;
+    case "moraMulta-wrapper":
+      (params2 as any).moraMulta = {
+        multa: { tipo: "PERCENTUAL", valor: 2 },
+        juros: { tipo: "PERCENTUAL_MES", valor: 1 },
+      };
+      break;
+    case "encargos-wrapper":
+      (params2 as any).encargos = {
+        multa: { tipo: "PERCENTUAL", valor: 2 },
+        juros: { tipo: "PERCENTUAL_MES", valor: 1 },
+      };
+      break;
     case "validade":
       params2.validadeAposVencimento = 30;
       break;
