@@ -139,6 +139,137 @@ function formatCurrency(value: number): string {
 }
 
 /**
+ * Calcula estimativa de juros + multa pra um boleto atrasado, baseado
+ * nas regras configuradas em /configuracoes/cobranca.
+ *
+ * - multa: aplica uma vez (no primeiro dia de atraso)
+ * - juros: por dia de atraso, conforme jurosTipo
+ *
+ * Retorna null se nao tem atraso ou se as regras dizem isento.
+ */
+function estimateFineInterest(
+  payment: Payment,
+  settings: {
+    multaTipo: string;
+    multaValor: number;
+    multaAposVenc: boolean;
+    jurosTipo: string;
+    jurosValor: number;
+    diaCorteJurosMulta: number;
+  } | null,
+): { fine: number; interest: number; total: number; daysLate: number } | null {
+  if (!settings) return null;
+  if (!payment.dueDate) return null;
+  if (payment.paidAt) return null; // ja foi pago, usa valores reais
+
+  const due = new Date(payment.dueDate);
+  const today = new Date();
+  const daysLate = Math.max(
+    0,
+    Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)),
+  );
+  if (daysLate <= 0) return null;
+
+  const valor = payment.value;
+
+  // Multa (aplicada uma vez)
+  let fine = 0;
+  if (settings.multaAposVenc) {
+    fine =
+      settings.multaTipo === "PERCENTUAL"
+        ? (valor * settings.multaValor) / 100
+        : settings.multaValor;
+  }
+
+  // Juros (por dia)
+  let interest = 0;
+  if (settings.jurosTipo === "PERCENTUAL_MES") {
+    interest = ((valor * settings.jurosValor) / 100 / 30) * daysLate;
+  } else if (settings.jurosTipo === "PERCENTUAL_DIA") {
+    interest = ((valor * settings.jurosValor) / 100) * daysLate;
+  } else if (settings.jurosTipo === "VALOR_DIA") {
+    interest = settings.jurosValor * daysLate;
+  } else {
+    interest = 0; // ISENTO
+  }
+
+  fine = Math.round(fine * 100) / 100;
+  interest = Math.round(interest * 100) / 100;
+  const total = Math.round((fine + interest) * 100) / 100;
+  if (total <= 0) return null;
+  return { fine, interest, total, daysLate };
+}
+
+/**
+ * Chip "estimado" pra boletos ATRASADOS ainda nao pagos. Mostra a
+ * estimativa de juros + multa SE o cliente pagar hoje, com tooltip
+ * mostrando o detalhamento e o destino previsto.
+ */
+function EstimatedFineInterestChip({
+  payment,
+  estimate,
+  diaCorte,
+}: {
+  payment: Payment;
+  estimate: { fine: number; interest: number; total: number; daysLate: number };
+  diaCorte: number;
+}) {
+  // Previsao de destino: se hoje.dia <= corte → imobiliaria; se nao → owner
+  const hoje = new Date().getDate();
+  const irParaImobiliaria = hoje <= diaCorte;
+  const destinoLabel = irParaImobiliaria
+    ? "Imobiliária (se pagar até dia " + diaCorte + ")"
+    : "Proprietário (após dia " + diaCorte + ")";
+
+  return (
+    <div className="group relative inline-block">
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border bg-orange-50 text-orange-700 border-orange-200 cursor-help">
+        ~ {formatCurrency(estimate.total)} se pagar hoje
+        <span className="text-muted-foreground">ⓘ</span>
+      </span>
+      <div className="invisible group-hover:visible absolute left-0 top-full mt-1 z-50 w-72 p-3 rounded-md border bg-popover shadow-md text-xs space-y-1.5">
+        <div className="font-semibold border-b pb-1.5 mb-1.5">
+          Estimativa de juros/multa
+        </div>
+        <div className="flex justify-between text-muted-foreground">
+          <span>Atraso:</span>
+          <span>{estimate.daysLate} dia(s)</span>
+        </div>
+        {estimate.fine > 0 && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Multa:</span>
+            <span className="font-medium">{formatCurrency(estimate.fine)}</span>
+          </div>
+        )}
+        {estimate.interest > 0 && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Juros:</span>
+            <span className="font-medium">{formatCurrency(estimate.interest)}</span>
+          </div>
+        )}
+        <div className="flex justify-between border-t pt-1.5">
+          <span className="font-semibold">Total estimado:</span>
+          <span className="font-semibold">{formatCurrency(estimate.total)}</span>
+        </div>
+        <div className="flex justify-between border-t pt-1.5 text-[10px] text-muted-foreground">
+          <span>Total devido:</span>
+          <span>{formatCurrency(payment.value + estimate.total)}</span>
+        </div>
+        <div className="border-t pt-1.5 mt-1.5">
+          <div className="text-[11px] font-semibold mb-0.5">
+            📌 Se pagar hoje, destino:
+          </div>
+          <div className="text-[11px]">{destinoLabel}</div>
+          <div className="text-[10px] text-muted-foreground italic mt-1">
+            * Estimativa — valor real é confirmado pelo banco no momento do pagamento.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Chip de juros/multa com tooltip explicativo. Mostra o destino
  * (imobiliária retém / repassado ao proprietário) e o motivo.
  */
@@ -258,6 +389,14 @@ function FinanceiroContent() {
   const router = useRouter();
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [billingSettings, setBillingSettings] = useState<{
+    multaTipo: string;
+    multaValor: number;
+    multaAposVenc: boolean;
+    jurosTipo: string;
+    jurosValor: number;
+    diaCorteJurosMulta: number;
+  } | null>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [activeTab, setActiveTab] = useState("todos");
@@ -366,6 +505,25 @@ function FinanceiroContent() {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(t);
   }, [search]);
+
+  // Carrega regras de juros/multa pra calcular estimativas em boletos atrasados
+  useEffect(() => {
+    fetch("/api/billing-settings")
+      .then((r) => r.json())
+      .then((s) => {
+        if (s && !s.error) {
+          setBillingSettings({
+            multaTipo: s.multaTipo || "PERCENTUAL",
+            multaValor: s.multaValor ?? 2,
+            multaAposVenc: s.multaAposVenc ?? true,
+            jurosTipo: s.jurosTipo || "PERCENTUAL_MES",
+            jurosValor: s.jurosValor ?? 1,
+            diaCorteJurosMulta: s.diaCorteJurosMulta ?? 10,
+          });
+        }
+      })
+      .catch(() => { /* tolerante a falha — chip estimado simplesmente nao aparece */ });
+  }, []);
 
   // Reset paginacao ao mudar filtros
   useEffect(() => {
@@ -964,6 +1122,19 @@ function FinanceiroContent() {
                       {((payment.fineValue ?? 0) > 0 || (payment.interestValue ?? 0) > 0) && (
                         <FineInterestChip payment={payment} />
                       )}
+                      {/* Estimativa pra boletos ATRASADOS ainda nao pagos */}
+                      {!payment.paidAt && payment.status === "ATRASADO" && (() => {
+                        const est = estimateFineInterest(payment, billingSettings);
+                        return est ? (
+                          <div className="mt-1">
+                            <EstimatedFineInterestChip
+                              payment={payment}
+                              estimate={est}
+                              diaCorte={billingSettings?.diaCorteJurosMulta ?? 10}
+                            />
+                          </div>
+                        ) : null;
+                      })()}
                       {payment.nossoNumero && (
                         <p className="mt-1 text-[11px] text-muted-foreground font-mono">
                           Boleto: {payment.nossoNumero}
@@ -1106,6 +1277,19 @@ function FinanceiroContent() {
                               <FineInterestChip payment={payment} />
                             </div>
                           )}
+                          {/* Estimativa pra boletos ATRASADOS ainda nao pagos */}
+                          {!payment.paidAt && payment.status === "ATRASADO" && (() => {
+                            const est = estimateFineInterest(payment, billingSettings);
+                            return est ? (
+                              <div className="mt-1">
+                                <EstimatedFineInterestChip
+                                  payment={payment}
+                                  estimate={est}
+                                  diaCorte={billingSettings?.diaCorteJurosMulta ?? 10}
+                                />
+                              </div>
+                            ) : null;
+                          })()}
                         </TableCell>
                         <TableCell className="text-xs">
                           {formatDate(payment.dueDate)}
