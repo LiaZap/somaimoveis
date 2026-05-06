@@ -1101,6 +1101,11 @@ function FinanceiroContent() {
                           ) : (
                             <span className="text-xs text-muted-foreground">-</span>
                           )}
+                          {((payment.fineValue ?? 0) > 0 || (payment.interestValue ?? 0) > 0) && (
+                            <div className="mt-1">
+                              <FineInterestChip payment={payment} />
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-xs">
                           {formatDate(payment.dueDate)}
