@@ -309,6 +309,28 @@ export default function ConfiguracoesCobrancaPage() {
           </CardContent>
         </Card>
 
+        {/* Link pra gestão de paymentDay dos contratos */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Calendar className="h-4 w-4" />
+              Dia de Vencimento dos Boletos (por contrato)
+            </CardTitle>
+            <CardDescription>
+              O dia em que o boleto do inquilino vence é configurado
+              individualmente em cada contrato. Use a tela de gestão pra
+              ver e editar todos de uma vez.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline">
+              <a href="/configuracoes/payment-day">
+                Gerenciar dia de vencimento dos contratos →
+              </a>
+            </Button>
+          </CardContent>
+        </Card>
+
         {/* Mensagem padrao */}
         <Card>
           <CardHeader>
