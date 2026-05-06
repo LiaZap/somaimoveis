@@ -353,8 +353,9 @@ function RegerarBoletoButton({ paymentId, paymentCode }: { paymentId: string; pa
       `Regerar o boleto ${paymentCode} com a config atual de juros/multa?\n\n` +
       `Isso vai:\n` +
       `1. Cancelar o boleto atual no Sicredi (link/PIX antigo deixa de funcionar)\n` +
-      `2. Emitir novo boleto com as regras atuais (multa/juros)\n\n` +
-      `Avise o cliente antes — link antigo vai parar de funcionar.`
+      `2. Emitir novo boleto com as regras atuais (multa/juros)\n` +
+      `3. Se o vencimento já passou, ajusta automaticamente pra hoje\n\n` +
+      `Avise o cliente — link antigo deixa de funcionar e o novo pode ter outra data.`
     )) return;
 
     setLoading(true);
@@ -367,7 +368,11 @@ function RegerarBoletoButton({ paymentId, paymentCode }: { paymentId: string; pa
         if (data.warning) {
           alert(`⚠ ${data.warning}\n\n${data.message || ""}`);
         } else {
-          alert(`✓ Boleto regerado com sucesso.\nNovo Nº: ${data.newNossoNumero || "—"}`);
+          let msg = `✓ Boleto regerado com sucesso.\nNovo Nº: ${data.newNossoNumero || "—"}`;
+          if (data.dueDateAdjusted) {
+            msg += `\n\n⚠ Vencimento foi ajustado pra ${new Date(data.dueDateAdjusted).toLocaleDateString("pt-BR")} (data antiga estava no passado).`;
+          }
+          alert(msg);
         }
         // Recarrega a tela pra atualizar dados
         window.location.reload();

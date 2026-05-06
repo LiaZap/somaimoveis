@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, isAuthError } from "@/lib/api-auth";
 import { sicrediCancelBoleto } from "@/lib/sicredi-client";
+import { nextBusinessDay } from "@/lib/business-days";
 
 /**
  * POST /api/payments/[id]/regerar
@@ -77,7 +78,28 @@ export async function POST(
 
     const oldNossoNumero = payment.nossoNumero;
 
-    // 2. Limpar campos do boleto no banco pra permitir regenerar
+    // 1.5. Buscar dueDate atual — se ja passou, ajusta pra proximo dia util
+    //      (Sicredi nao aceita criar boleto com data no passado)
+    const fullPayment = await prisma.payment.findUnique({
+      where: { id },
+      select: { dueDate: true, value: true },
+    });
+    let dueDateAdjusted: Date | null = null;
+    if (fullPayment?.dueDate) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const due = new Date(fullPayment.dueDate);
+      due.setHours(0, 0, 0, 0);
+      if (due < today) {
+        // Move pra hoje (ou proximo dia util se hoje for fim de semana)
+        const newRaw = new Date();
+        newRaw.setHours(12, 0, 0, 0);
+        dueDateAdjusted = nextBusinessDay(newRaw);
+      }
+    }
+
+    // 2. Limpar campos do boleto no banco pra permitir regenerar +
+    //    ajustar dueDate se necessario
     await prisma.payment.update({
       where: { id },
       data: {
@@ -91,6 +113,7 @@ export async function POST(
         multaValorBoleto: null,
         jurosTipoBoleto: null,
         jurosValorBoleto: null,
+        ...(dueDateAdjusted && { dueDate: dueDateAdjusted }),
       },
     });
 
@@ -124,9 +147,14 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      message: "Boleto regerado com sucesso usando a config atual.",
+      message:
+        "Boleto regerado com sucesso usando a config atual." +
+        (dueDateAdjusted
+          ? ` ⚠ Vencimento ajustado pra ${dueDateAdjusted.toLocaleDateString("pt-BR")} (data antiga estava no passado).`
+          : ""),
       oldNossoNumero,
       newNossoNumero: reemissaoData?.nossoNumero,
+      dueDateAdjusted: dueDateAdjusted?.toISOString() || null,
       payment: {
         id: payment.id,
         code: payment.code,
