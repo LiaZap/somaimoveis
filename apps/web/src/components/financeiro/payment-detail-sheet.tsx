@@ -40,6 +40,15 @@ interface PaymentLite {
   notes: string | null;
   nossoNumero?: string;
   linhaDigitavel?: string;
+  // Juros/multa
+  fineValue?: number | null;
+  interestValue?: number | null;
+  fineRetidaImobiliaria?: boolean | null;
+  interestRetidaImobiliaria?: boolean | null;
+  multaTipoBoleto?: string | null;
+  multaValorBoleto?: number | null;
+  jurosTipoBoleto?: string | null;
+  jurosValorBoleto?: number | null;
   contractId: string;
   contract?: {
     id: string;
@@ -103,6 +112,185 @@ function parseBreakdown(notes: string | null): Breakdown | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Calcula estimativa juros/multa pra boletos atrasados nao pagos.
+ * Usa snapshot do boleto se disponivel, senao fallback de mercado
+ * (multa 2% + juros 1%/mes).
+ */
+function estimatePaymentFineInterest(payment: PaymentLite): {
+  fine: number;
+  interest: number;
+  total: number;
+  daysLate: number;
+  multaTipo: string;
+  multaValor: number;
+  jurosTipo: string;
+  jurosValor: number;
+  source: "BOLETO" | "GLOBAL";
+} | null {
+  if (payment.paidAt) return null;
+  const due = new Date(payment.dueDate);
+  const today = new Date();
+  const daysLate = Math.max(
+    0,
+    Math.floor((today.getTime() - due.getTime()) / 86400000),
+  );
+  if (daysLate <= 0) return null;
+
+  const hasSnapshot =
+    payment.multaTipoBoleto != null ||
+    payment.multaValorBoleto != null ||
+    payment.jurosTipoBoleto != null ||
+    payment.jurosValorBoleto != null;
+
+  const multaTipo = hasSnapshot
+    ? (payment.multaTipoBoleto || "PERCENTUAL")
+    : "PERCENTUAL";
+  const multaValor = hasSnapshot ? (payment.multaValorBoleto ?? 0) : 2;
+  const jurosTipo = hasSnapshot
+    ? (payment.jurosTipoBoleto || "ISENTO")
+    : "PERCENTUAL_MES";
+  const jurosValor = hasSnapshot ? (payment.jurosValorBoleto ?? 0) : 1;
+
+  const valor = payment.value;
+  let fine = 0;
+  if (multaValor > 0) {
+    fine = multaTipo === "PERCENTUAL" ? (valor * multaValor) / 100 : multaValor;
+  }
+  let interest = 0;
+  if (jurosTipo === "PERCENTUAL_MES") {
+    interest = ((valor * jurosValor) / 100 / 30) * daysLate;
+  } else if (jurosTipo === "PERCENTUAL_DIA") {
+    interest = ((valor * jurosValor) / 100) * daysLate;
+  } else if (jurosTipo === "VALOR_DIA") {
+    interest = jurosValor * daysLate;
+  }
+
+  fine = Math.round(fine * 100) / 100;
+  interest = Math.round(interest * 100) / 100;
+  const total = Math.round((fine + interest) * 100) / 100;
+  if (total <= 0) return null;
+  return {
+    fine,
+    interest,
+    total,
+    daysLate,
+    multaTipo,
+    multaValor,
+    jurosTipo,
+    jurosValor,
+    source: hasSnapshot ? "BOLETO" : "GLOBAL",
+  };
+}
+
+/**
+ * Secao de juros/multa no modal de detalhe.
+ *  - Boleto JA PAGO com encargos: mostra valores reais e destino (imob/owner)
+ *  - Boleto ATRASADO nao pago: mostra estimativa "se pagar hoje"
+ *  - Sem encargos: nao renderiza nada
+ */
+function FineInterestSection({ payment }: { payment: PaymentLite }) {
+  const realFine = payment.fineValue ?? 0;
+  const realInterest = payment.interestValue ?? 0;
+  const hasReal = realFine > 0 || realInterest > 0;
+  const estimate = !hasReal ? estimatePaymentFineInterest(payment) : null;
+
+  if (!hasReal && !estimate) return null;
+
+  if (hasReal) {
+    const total = realFine + realInterest;
+    const fineRetida = payment.fineRetidaImobiliaria === true;
+    const interestRetida = payment.interestRetidaImobiliaria === true;
+    const todosRetidos =
+      (realFine === 0 || fineRetida) && (realInterest === 0 || interestRetida);
+    const todosRepassados =
+      (realFine === 0 || !fineRetida) && (realInterest === 0 || !interestRetida);
+    const destinoLabel = todosRetidos
+      ? "Retido pela imobiliária"
+      : todosRepassados
+      ? "Repassado ao proprietário"
+      : "Destino misto";
+    const destinoColor = todosRetidos
+      ? "text-emerald-700"
+      : todosRepassados
+      ? "text-blue-700"
+      : "text-amber-700";
+
+    return (
+      <div>
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+          Juros e Multa (cobrados)
+        </h3>
+        <div className="rounded-lg border bg-emerald-50/30 divide-y text-sm">
+          {realFine > 0 && (
+            <Row label="Multa" value={formatCurrency(realFine)} />
+          )}
+          {realInterest > 0 && (
+            <Row label="Juros" value={formatCurrency(realInterest)} />
+          )}
+          <Row
+            label="Total juros/multa"
+            value={formatCurrency(total)}
+            className="font-bold bg-muted/30"
+          />
+        </div>
+        <div className={`mt-2 text-xs ${destinoColor} flex items-center gap-1`}>
+          📌 <strong>Destino:</strong> {destinoLabel}
+        </div>
+      </div>
+    );
+  }
+
+  // Estimativa
+  if (!estimate) return null;
+  return (
+    <div>
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1">
+        Juros e Multa (estimado se pagar hoje)
+        <Badge variant="outline" className="text-[9px] bg-orange-50 text-orange-700 border-orange-200 ml-1">
+          {estimate.daysLate} dia{estimate.daysLate > 1 ? "s" : ""} atraso
+        </Badge>
+      </h3>
+      <div className="rounded-lg border bg-orange-50/30 divide-y text-sm">
+        {estimate.fine > 0 && (
+          <Row label="Multa estimada" value={formatCurrency(estimate.fine)} />
+        )}
+        {estimate.interest > 0 && (
+          <Row label="Juros estimado" value={formatCurrency(estimate.interest)} />
+        )}
+        <Row
+          label="Total estimado"
+          value={formatCurrency(estimate.total)}
+          className="font-bold bg-muted/30 text-orange-700"
+        />
+        <Row
+          label="Total devido (com encargos)"
+          value={formatCurrency(payment.value + estimate.total)}
+          className="text-xs text-muted-foreground"
+        />
+      </div>
+      <div className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
+        Regras: multa{" "}
+        {estimate.multaTipo === "PERCENTUAL"
+          ? `${estimate.multaValor}%`
+          : formatCurrency(estimate.multaValor)}
+        ; juros{" "}
+        {estimate.jurosTipo === "PERCENTUAL_MES"
+          ? `${estimate.jurosValor}%/mês`
+          : estimate.jurosTipo === "PERCENTUAL_DIA"
+          ? `${estimate.jurosValor}%/dia`
+          : estimate.jurosTipo === "VALOR_DIA"
+          ? `${formatCurrency(estimate.jurosValor)}/dia`
+          : "isento"}
+        .{" "}
+        {estimate.source === "BOLETO"
+          ? "✓ Mesmas regras enviadas ao Sicredi."
+          : "(Pode haver pequena diferença com o valor real do Sicredi.)"}
+      </div>
+    </div>
+  );
 }
 
 interface Props {
@@ -283,6 +471,9 @@ export function PaymentDetailSheet({ paymentId, payments, open, onOpenChange, on
               )}
             </div>
           )}
+
+          {/* Juros/Multa — REAL (boleto pago) ou ESTIMADO (atrasado nao pago) */}
+          <FineInterestSection payment={payment} />
 
           {/* Partes envolvidas */}
           <div>
