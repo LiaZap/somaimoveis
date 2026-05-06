@@ -242,15 +242,27 @@ export async function sicrediCreateBoleto(
   };
 
   // Multa apos vencimento
+  // Sicredi rejeita multa PERCENTUAL > 2% (limite legal CDC art. 52 §1).
+  // Se config interna eh maior, cap em 2% pra o boleto sair, e a
+  // diferenca tem que ser cobrada por outro canal.
   if (params.multa && params.multa.valor > 0) {
+    let multaValor = params.multa.valor;
+    if (params.multa.tipo === "PERCENTUAL" && multaValor > 2) {
+      console.warn(
+        `[Sicredi] Multa ${multaValor}% acima do limite de 2% — capando em 2%. ` +
+        `Diferenca precisa ser cobrada manualmente.`
+      );
+      multaValor = 2;
+    }
     body.multa = {
       tipo: params.multa.tipo, // "VALOR" | "PERCENTUAL"
-      valor: params.multa.valor,
+      valor: multaValor,
       ...(params.multa.data && { data: params.multa.data }),
     };
   }
 
   // Juros apos vencimento
+  // Sicredi tipicamente aceita juros PERCENTUAL_MES <= 1% (= 12% ano)
   if (params.juros && params.juros.valor > 0) {
     body.juros = {
       tipo: params.juros.tipo,
@@ -289,13 +301,31 @@ export async function sicrediCreateBoleto(
     const data = await response.json();
 
     if (!response.ok) {
-      console.error(`[Sicredi] Erro ao criar boleto ${response.status}:`, data);
+      console.error(
+        `[Sicredi] Erro ao criar boleto ${response.status}:`,
+        JSON.stringify(data, null, 2),
+      );
+      // Tentar extrair mensagens detalhadas que o Sicredi as vezes manda
+      // em arrays: { errors: [{ field, message }] } ou { violations: [...] }
+      const detalhes: string[] = [];
+      const arr = (data as any)?.errors || (data as any)?.violations || [];
+      if (Array.isArray(arr)) {
+        for (const e of arr) {
+          if (e?.field && e?.message) detalhes.push(`${e.field}: ${e.message}`);
+          else if (typeof e === "string") detalhes.push(e);
+        }
+      }
+      const errorMsg =
+        (detalhes.length > 0 ? detalhes.join("; ") : null) ||
+        (data as any)?.message ||
+        (data as any)?.error ||
+        `Erro HTTP ${response.status}`;
       return {
         nossoNumero: "",
         linhaDigitavel: "",
         codigoBarras: "",
         success: false,
-        error: data?.message || data?.error || `Erro HTTP ${response.status}`,
+        error: errorMsg,
       };
     }
 
