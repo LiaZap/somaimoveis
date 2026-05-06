@@ -241,34 +241,59 @@ export async function sicrediCreateBoleto(
     ...(params.mensagens && { mensagens: params.mensagens }),
   };
 
-  // Multa apos vencimento
-  // Sicredi rejeita multa PERCENTUAL > 2% (limite legal CDC art. 52 §1).
-  // Se config interna eh maior, cap em 2% pra o boleto sair, e a
-  // diferenca tem que ser cobrada por outro canal.
-  if (params.multa && params.multa.valor > 0) {
+  // ATENCAO: Sicredi v1 cobranca/boleto PRODUCAO esta rejeitando
+  // QUALQUER formato de multa/juros no root do payload com
+  // "Failed to read HTTP message" (testado: tipo string, num,
+  // codigo, com data, sem data, valor fixo, percentual, etc).
+  //
+  // Hipoteses (sem confirmacao do suporte Sicredi):
+  // - Feature de multa/juros pode precisar ser habilitada no
+  //   contrato da empresa com o Sicredi
+  // - Schema mudou na API e a doc publica esta desatualizada
+  // - Cooperativa especifica nao aceita esse formato
+  //
+  // Workaround: NAO enviar multa/juros no payload. Boleto eh criado
+  // sem cobranca automatica de encargos. Quando cliente atrasar:
+  // - Sicredi NAO cobra juros/multa automaticamente
+  // - Imobiliaria precisa cobrar os encargos por outro canal
+  //   (ou inserir manualmente no Payment.fineValue/interestValue)
+  //
+  // Pra reativar: setar SICREDI_SEND_FEES=true no env. Quando o
+  // suporte do Sicredi confirmar o formato correto, atualizar este
+  // bloco e ativar.
+  const SEND_FEES = process.env.SICREDI_SEND_FEES === "true";
+
+  if (SEND_FEES && params.multa && params.multa.valor > 0) {
     let multaValor = params.multa.valor;
     if (params.multa.tipo === "PERCENTUAL" && multaValor > 2) {
       console.warn(
-        `[Sicredi] Multa ${multaValor}% acima do limite de 2% — capando em 2%. ` +
-        `Diferenca precisa ser cobrada manualmente.`
+        `[Sicredi] Multa ${multaValor}% acima do limite de 2% — capando em 2%.`,
       );
       multaValor = 2;
     }
     body.multa = {
-      tipo: params.multa.tipo, // "VALOR" | "PERCENTUAL"
+      tipo: params.multa.tipo,
       valor: multaValor,
       ...(params.multa.data && { data: params.multa.data }),
     };
+  } else if (params.multa && params.multa.valor > 0) {
+    console.log(
+      `[Sicredi] Multa ${params.multa.valor} configurada mas NAO enviada ao banco ` +
+      `(SICREDI_SEND_FEES=false). Cobranca de multa manual na Somma.`,
+    );
   }
 
-  // Juros apos vencimento
-  // Sicredi tipicamente aceita juros PERCENTUAL_MES <= 1% (= 12% ano)
-  if (params.juros && params.juros.valor > 0) {
+  if (SEND_FEES && params.juros && params.juros.valor > 0) {
     body.juros = {
       tipo: params.juros.tipo,
       valor: params.juros.valor,
       ...(params.juros.data && { data: params.juros.data }),
     };
+  } else if (params.juros && params.juros.valor > 0) {
+    console.log(
+      `[Sicredi] Juros ${params.juros.valor} configurados mas NAO enviados ao banco ` +
+      `(SICREDI_SEND_FEES=false). Cobranca de juros manual na Somma.`,
+    );
   }
 
   // Validade pos-vencimento do PIX cobv (dias que o pagamento ainda eh aceito)
