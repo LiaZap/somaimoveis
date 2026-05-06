@@ -13,6 +13,8 @@ interface ContratoRow {
   id: string;
   code: string;
   paymentDay: number;
+  tenantPaymentDay: number | null;
+  mismatch: boolean;
   locatario: string;
   proprietario: string;
   imovel: string;
@@ -30,6 +32,7 @@ export default function PaymentDayPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [filterDay, setFilterDay] = useState<number | null>(null);
+  const [onlyMismatch, setOnlyMismatch] = useState(false);
   // Edits pending: contractId -> newPaymentDay
   const [edits, setEdits] = useState<Map<string, number>>(new Map());
 
@@ -108,6 +111,7 @@ export default function PaymentDayPage() {
   const filtered = useMemo(() => {
     if (!data) return [];
     let list = data.contratos;
+    if (onlyMismatch) list = list.filter((c) => c.mismatch);
     if (filterDay !== null) list = list.filter((c) => c.paymentDay === filterDay);
     if (search) {
       const s = search.toLowerCase().trim();
@@ -120,7 +124,9 @@ export default function PaymentDayPage() {
       );
     }
     return list;
-  }, [data, filterDay, search]);
+  }, [data, filterDay, search, onlyMismatch]);
+
+  const totalMismatches = data?.contratos.filter((c) => c.mismatch).length || 0;
 
   return (
     <div className="flex flex-col">
@@ -158,18 +164,28 @@ export default function PaymentDayPage() {
             <CardContent>
               <div className="flex flex-wrap gap-2">
                 <Button
-                  variant={filterDay === null ? "default" : "outline"}
+                  variant={filterDay === null && !onlyMismatch ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setFilterDay(null)}
+                  onClick={() => { setFilterDay(null); setOnlyMismatch(false); }}
                 >
                   Todos ({data.totalContratos})
                 </Button>
+                {totalMismatches > 0 && (
+                  <Button
+                    variant={onlyMismatch ? "destructive" : "outline"}
+                    size="sm"
+                    onClick={() => { setOnlyMismatch(!onlyMismatch); setFilterDay(null); }}
+                    className={onlyMismatch ? "" : "border-red-300 text-red-700 hover:bg-red-50"}
+                  >
+                    ⚠ Desincronizados ({totalMismatches})
+                  </Button>
+                )}
                 {data.distribuicao.map((d) => (
                   <Button
                     key={d.paymentDay}
-                    variant={filterDay === d.paymentDay ? "default" : "outline"}
+                    variant={filterDay === d.paymentDay && !onlyMismatch ? "default" : "outline"}
                     size="sm"
-                    onClick={() => setFilterDay(d.paymentDay)}
+                    onClick={() => { setFilterDay(d.paymentDay); setOnlyMismatch(false); }}
                   >
                     Dia {d.paymentDay} ({d.total})
                   </Button>
@@ -236,7 +252,12 @@ export default function PaymentDayPage() {
                       <th className="text-left px-4 py-2 font-medium">Locatário</th>
                       <th className="text-left px-4 py-2 font-medium">Proprietário</th>
                       <th className="text-left px-4 py-2 font-medium">Imóvel</th>
-                      <th className="text-left px-4 py-2 font-medium w-32">Dia Atual</th>
+                      <th className="text-left px-4 py-2 font-medium w-32" title="Dia configurado no contrato (usado pelo billing)">
+                        Dia Contrato
+                      </th>
+                      <th className="text-left px-4 py-2 font-medium w-32" title="Dia configurado no cadastro do locatário (informativo)">
+                        Dia Locatário
+                      </th>
                       <th className="text-left px-4 py-2 font-medium w-32">Novo Dia</th>
                     </tr>
                   </thead>
@@ -247,7 +268,7 @@ export default function PaymentDayPage() {
                       return (
                         <tr
                           key={c.id}
-                          className={`border-b last:border-0 ${hasEdit ? "bg-amber-50" : ""}`}
+                          className={`border-b last:border-0 ${hasEdit ? "bg-amber-50" : c.mismatch ? "bg-red-50/40" : ""}`}
                         >
                           <td className="px-4 py-2 font-mono text-xs">{c.code}</td>
                           <td className="px-4 py-2">{c.locatario}</td>
@@ -263,16 +284,48 @@ export default function PaymentDayPage() {
                             </Badge>
                           </td>
                           <td className="px-4 py-2">
-                            <Input
-                              type="number"
-                              min="1"
-                              max="31"
-                              className="h-8 w-20"
-                              defaultValue={c.paymentDay}
-                              onChange={(e) =>
-                                handleEdit(c.id, c.paymentDay, e.target.value)
-                              }
-                            />
+                            {c.tenantPaymentDay !== null ? (
+                              <Badge
+                                variant="outline"
+                                className={`font-mono ${c.mismatch ? "bg-red-100 text-red-700 border-red-300" : ""}`}
+                                title={c.mismatch ? "DIVERGENTE do dia do contrato" : ""}
+                              >
+                                {c.tenantPaymentDay}
+                                {c.mismatch && " ⚠"}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2">
+                            <div className="flex items-center gap-1">
+                              <Input
+                                type="number"
+                                min="1"
+                                max="31"
+                                className="h-8 w-20"
+                                key={c.id + "-" + (newDay ?? c.paymentDay)}
+                                defaultValue={c.paymentDay}
+                                onChange={(e) =>
+                                  handleEdit(c.id, c.paymentDay, e.target.value)
+                                }
+                              />
+                              {c.mismatch && c.tenantPaymentDay !== null && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-2 text-xs"
+                                  title={`Usar dia ${c.tenantPaymentDay} do cadastro do locatário`}
+                                  onClick={() => {
+                                    const next = new Map(edits);
+                                    next.set(c.id, c.tenantPaymentDay!);
+                                    setEdits(next);
+                                  }}
+                                >
+                                  ← {c.tenantPaymentDay}
+                                </Button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
