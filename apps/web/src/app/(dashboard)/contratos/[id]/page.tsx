@@ -682,7 +682,7 @@ export default function ContratoDetalhePage() {
                   />
                   <InfoRow label="Data Inicio" value={formatDate(contract.startDate)} />
                   <InfoRow label="Data Termino" value={formatDate(contract.endDate)} />
-                  <InfoRow label="Dia Pagamento Locatário" value={`Dia ${contract.tenant?.paymentDay || contract.paymentDay}`} />
+                  <InfoRow label="Dia Pagamento Locatário" value={`Dia ${contract.paymentDay}`} />
                   <InfoRow label="Dia Pagamento Proprietário" value={`Dia ${contract.owner?.paymentDay || 10}`} />
                   <InfoRow
                     label="Indice de Reajuste"
