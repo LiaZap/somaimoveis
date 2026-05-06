@@ -77,7 +77,8 @@ export async function POST(
     },
     valor: payment.value,
     dataVencimento: formatDate(due),
-    seuNumero: `DBG-${Date.now().toString().slice(-8)}`,
+    // seuNumero max 10 chars no Sicredi
+    seuNumero: `DBG${Date.now().toString().slice(-7)}`,
     tipoCobranca: "HIBRIDO",
   };
 
@@ -96,10 +97,32 @@ export async function POST(
       params2.juros = { tipo: "PERCENTUAL_MES", valor: 1 };
       break;
     case "fees-normal":
-      // Multa/juros + NORMAL (sem PIX)
       params2.tipoCobranca = "NORMAL";
       params2.multa = { tipo: "PERCENTUAL", valor: 2 };
       params2.juros = { tipo: "PERCENTUAL_MES", valor: 1 };
+      break;
+    case "only-multa":
+      // SO multa, sem juros
+      params2.multa = { tipo: "PERCENTUAL", valor: 2 };
+      break;
+    case "only-juros":
+      // SO juros, sem multa
+      params2.juros = { tipo: "PERCENTUAL_MES", valor: 1 };
+      break;
+    case "multa-com-data":
+      // Multa com data explicita (D+1 do venc)
+      const d1 = new Date(due);
+      d1.setDate(d1.getDate() + 1);
+      params2.multa = { tipo: "PERCENTUAL", valor: 2, data: formatDate(d1) };
+      break;
+    case "multa-valor-fixo":
+      // Multa em VALOR fixo (R$), nao percentual
+      params2.multa = { tipo: "VALOR", valor: 50 };
+      break;
+    case "juros-com-data":
+      const d2 = new Date(due);
+      d2.setDate(d2.getDate() + 1);
+      params2.juros = { tipo: "PERCENTUAL_MES", valor: 1, data: formatDate(d2) };
       break;
     case "validade":
       params2.validadeAposVencimento = 30;
