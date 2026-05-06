@@ -1196,8 +1196,9 @@ function FinanceiroContent() {
                       {((payment.fineValue ?? 0) > 0 || (payment.interestValue ?? 0) > 0) && (
                         <FineInterestChip payment={payment} />
                       )}
-                      {/* Estimativa pra boletos ATRASADOS ainda nao pagos */}
-                      {!payment.paidAt && payment.status === "ATRASADO" && (() => {
+                      {/* Estimativa pra boletos atrasados ainda nao pagos
+                          (PENDENTE com vencimento passado OU ATRASADO explicito) */}
+                      {!payment.paidAt && isOverdue(payment) && (() => {
                         const est = estimateFineInterest(payment, billingSettings);
                         return est ? (
                           <div className="mt-1">
@@ -1351,8 +1352,9 @@ function FinanceiroContent() {
                               <FineInterestChip payment={payment} />
                             </div>
                           )}
-                          {/* Estimativa pra boletos ATRASADOS ainda nao pagos */}
-                          {!payment.paidAt && payment.status === "ATRASADO" && (() => {
+                          {/* Estimativa pra boletos atrasados ainda nao pagos
+                              (PENDENTE com vencimento passado OU ATRASADO explicito) */}
+                          {!payment.paidAt && isOverdue(payment) && (() => {
                             const est = estimateFineInterest(payment, billingSettings);
                             return est ? (
                               <div className="mt-1">
