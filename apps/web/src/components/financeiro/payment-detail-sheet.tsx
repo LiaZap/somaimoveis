@@ -339,6 +339,66 @@ interface Props {
   onMarkPaid?: (id: string) => void;
 }
 
+/**
+ * Botao "Regerar Boleto com config atual" — cancela o boleto antigo
+ * no Sicredi e re-emite com as regras atuais de juros/multa do
+ * BillingSettings. Util pra atualizar boletos JA EMITIDOS sem ter
+ * que cancelar manualmente e re-emitir manualmente.
+ */
+function RegerarBoletoButton({ paymentId, paymentCode }: { paymentId: string; paymentCode: string }) {
+  const [loading, setLoading] = useState(false);
+
+  async function handleRegerar() {
+    if (!confirm(
+      `Regerar o boleto ${paymentCode} com a config atual de juros/multa?\n\n` +
+      `Isso vai:\n` +
+      `1. Cancelar o boleto atual no Sicredi (link/PIX antigo deixa de funcionar)\n` +
+      `2. Emitir novo boleto com as regras atuais (multa/juros)\n\n` +
+      `Avise o cliente antes — link antigo vai parar de funcionar.`
+    )) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/payments/${paymentId}/regerar`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (res.ok || res.status === 207) {
+        if (data.warning) {
+          alert(`⚠ ${data.warning}\n\n${data.message || ""}`);
+        } else {
+          alert(`✓ Boleto regerado com sucesso.\nNovo Nº: ${data.newNossoNumero || "—"}`);
+        }
+        // Recarrega a tela pra atualizar dados
+        window.location.reload();
+      } else {
+        alert(`Erro: ${data.error || `HTTP ${res.status}`}`);
+      }
+    } catch (err: any) {
+      alert(`Erro ao regerar: ${err?.message || err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="mt-2 w-full text-xs gap-1.5 border-orange-300 text-orange-700 hover:bg-orange-50"
+      onClick={handleRegerar}
+      disabled={loading}
+    >
+      {loading ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Receipt className="h-3.5 w-3.5" />
+      )}
+      {loading ? "Regerando..." : "Regerar boleto com config atual de juros/multa"}
+    </Button>
+  );
+}
+
 export function PaymentDetailSheet({ paymentId, payments, open, onOpenChange, onMarkPaid }: Props) {
   const [contractPayments, setContractPayments] = useState<ContractPayment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -607,6 +667,11 @@ export function PaymentDetailSheet({ paymentId, payments, open, onOpenChange, on
                   </div>
                 )}
               </div>
+              {/* Botao "Regerar com config atual" — para boletos atrasados/pendentes
+                  cuja regra de juros/multa pode estar desatualizada no Sicredi */}
+              {payment.status !== "PAGO" && payment.status !== "CANCELADO" && (
+                <RegerarBoletoButton paymentId={payment.id} paymentCode={payment.code} />
+              )}
             </div>
           )}
 

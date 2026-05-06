@@ -22,9 +22,10 @@ import { sicrediCancelBoleto } from "@/lib/sicredi-client";
  * /api/payments/[id]/boleto que recria o boleto com as regras atuais.
  */
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const _request = request;
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
 
@@ -74,6 +75,8 @@ export async function POST(
       );
     }
 
+    const oldNossoNumero = payment.nossoNumero;
+
     // 2. Limpar campos do boleto no banco pra permitir regenerar
     await prisma.payment.update({
       where: { id },
@@ -83,18 +86,50 @@ export async function POST(
         codigoBarras: null,
         pixCopiaECola: null,
         boletoStatus: "CANCELADO",
+        // Limpa snapshot tambem — vai pegar config nova no proximo registro
+        multaTipoBoleto: null,
+        multaValorBoleto: null,
+        jurosTipoBoleto: null,
+        jurosValorBoleto: null,
       },
     });
 
+    // 3. Re-emitir o boleto na sequencia chamando a rota interna
+    //    (POST /api/payments/[id]/boleto). Reusa toda a logica que ja
+    //    pega BillingSettings + config do contrato + salva snapshot.
+    const cookie = _request.headers.get("cookie") || "";
+    const baseUrl = new URL(_request.url).origin;
+    const reemissaoRes = await fetch(`${baseUrl}/api/payments/${id}/boleto`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+    });
+    const reemissaoData = await reemissaoRes.json().catch(() => ({}));
+
+    if (!reemissaoRes.ok) {
+      return NextResponse.json(
+        {
+          warning: "Boleto antigo cancelado, mas falhou ao re-emitir.",
+          oldNossoNumero,
+          reemissaoError: reemissaoData?.error || `HTTP ${reemissaoRes.status}`,
+          message:
+            "Use o botao 'Gerar Boleto' na tela do pagamento pra emitir manualmente " +
+            "com a config atual.",
+        },
+        { status: 207 }, // multi-status: cancelou OK, re-emissao falhou
+      );
+    }
+
     return NextResponse.json({
       success: true,
-      message:
-        "Boleto antigo cancelado. Use o botao 'Gerar Boleto' pra criar novo " +
-        "com as regras atuais de juros/multa.",
+      message: "Boleto regerado com sucesso usando a config atual.",
+      oldNossoNumero,
+      newNossoNumero: reemissaoData?.nossoNumero,
       payment: {
         id: payment.id,
         code: payment.code,
-        oldNossoNumero: payment.nossoNumero,
       },
     });
   } catch (error: any) {
