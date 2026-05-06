@@ -215,7 +215,16 @@ function estimateFineInterest(
     jurosValor = settings.jurosValor;
     source = "GLOBAL";
   } else {
-    return null;
+    // Fallback hardcoded — caso billing-settings nao carregue por
+    // alguma razao (rede, auth, etc). Usa padrao de mercado: 2% multa
+    // + 1%/mes juros. Melhor mostrar estimativa aproximada do que
+    // nada. UI mostra como "fallback" pra usuario saber.
+    multaTipo = "PERCENTUAL";
+    multaValor = 2;
+    multaAposVenc = true;
+    jurosTipo = "PERCENTUAL_MES";
+    jurosValor = 1;
+    source = "GLOBAL";
   }
 
   const valor = payment.value;
