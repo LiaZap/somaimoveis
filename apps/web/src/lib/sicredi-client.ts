@@ -253,15 +253,12 @@ export async function sicrediCreateBoleto(
   //
   // tipoMulta: "VALOR" | "PERCENTUAL"
   // tipoJuros: "VALOR" | "PERCENTUAL_DIA" | "PERCENTUAL_MES" | "ISENTO"
+  //
+  // Sicredi aceita multa percentual acima de 2% (exemplo da propria
+  // collection oficial usa 5.29%). O limite legal de 2% (CDC art.52§1)
+  // eh discussao juridica entre Somma e cliente; banco nao valida.
   if (params.multa && params.multa.valor > 0) {
-    let multaValor = params.multa.valor;
-    if (params.multa.tipo === "PERCENTUAL" && multaValor > 2) {
-      console.warn(
-        `[Sicredi] Multa ${multaValor}% acima do limite de 2% — capando em 2%.`,
-      );
-      multaValor = 2;
-    }
-    body.multa = multaValor;
+    body.multa = params.multa.valor;
     body.tipoMulta = params.multa.tipo;
   }
 
