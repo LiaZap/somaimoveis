@@ -1,8 +1,10 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { useSearchParams, useRouter } from "next/navigation";
+import { isAdmin as isAdminRole } from "@/lib/rbac";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -471,6 +473,12 @@ export default function FinanceiroPage() {
 function FinanceiroContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { data: session } = useSession();
+  // canAdmin: pode ver os cards agregados de faturamento da empresa.
+  // CORRETOR e FINANCEIRO veem listagem normal mas SEM os 4 totais
+  // (Faturamento Total / A Receber / Em Atraso / Recebido este Mes).
+  const canAdmin = isAdminRole((session?.user as any)?.role);
+
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [billingSettings, setBillingSettings] = useState<{
@@ -838,7 +846,10 @@ function FinanceiroContent() {
       <Header title="Financeiro" subtitle="Controle de pagamentos e receitas" />
 
       <div className="p-4 sm:p-6 space-y-4">
-        {/* Summary Cards */}
+        {/* Summary Cards — agregados de faturamento da empresa.
+            Apenas ADMIN vê. Colaboradores (CORRETOR/FINANCEIRO) não veem
+            esses totais — mantém a tabela e demais ações normais. */}
+        {canAdmin && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="border-0 shadow-sm">
             <CardContent className="p-5">
@@ -917,6 +928,7 @@ function FinanceiroContent() {
             </CardContent>
           </Card>
         </div>
+        )}
 
         {/* Payments Table */}
         <Card className="border-0 shadow-sm">
