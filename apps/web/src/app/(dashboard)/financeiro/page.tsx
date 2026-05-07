@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PaymentDetailSheet } from "@/components/financeiro/payment-detail-sheet";
+import { MarkAsPaidDialog } from "@/components/financeiro/mark-as-paid-dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -503,6 +504,10 @@ function FinanceiroContent() {
   const [detailPaymentId, setDetailPaymentId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
+  // Dialog "Marcar como Pago" (com toggle de juros/multa)
+  const [markPaidPayment, setMarkPaidPayment] = useState<Payment | null>(null);
+  const [markPaidOpen, setMarkPaidOpen] = useState(false);
+
   function openDetail(paymentId: string) {
     setDetailPaymentId(paymentId);
     setDetailOpen(true);
@@ -687,26 +692,11 @@ function FinanceiroContent() {
     }
   }
 
-  async function handleMarkAsPaid(payment: Payment) {
-    try {
-      const response = await fetch(`/api/payments/${payment.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: "PAGO",
-          paidAt: new Date().toISOString(),
-          paidValue: payment.value,
-        }),
-      });
-      if (!response.ok) {
-        const error = await response.json();
-        toast.error(error.error || "Erro ao atualizar pagamento");
-        return;
-      }
-      refresh();
-    } catch (error) {
-      toast.error("Erro ao atualizar pagamento");
-    }
+  // Modal de "Marcar como Pago" — abre dialog ao inves de confirmar direto.
+  // Permite escolher data, forma de pagamento e cobrar/isentar juros/multa.
+  function handleMarkAsPaid(payment: Payment) {
+    setMarkPaidPayment(payment);
+    setMarkPaidOpen(true);
   }
 
   function handleFormSuccess() {
@@ -1631,6 +1621,17 @@ function FinanceiroContent() {
         onMarkPaid={(id) => {
           const p = payments.find((x) => x.id === id);
           if (p) handleMarkAsPaid(p as Payment);
+        }}
+      />
+
+      {/* Dialog "Marcar como Pago" — toggle de juros/multa pra dinheiro */}
+      <MarkAsPaidDialog
+        payment={markPaidPayment as any}
+        open={markPaidOpen}
+        onOpenChange={setMarkPaidOpen}
+        onSuccess={() => {
+          setMarkPaidPayment(null);
+          refresh();
         }}
       />
     </div>
