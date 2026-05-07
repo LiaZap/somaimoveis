@@ -104,8 +104,15 @@ export function buildSearchWhere(
   // Para campos *.name e *.title, usa a versao Normalized (lowercase + sem
   // acentos), comparada ao token tambem normalizado. Isso da busca
   // case-insensitive e accent-insensitive em SQLite.
+  //
+  // Para campos sem versao Normalized (ex: code, description, email),
+  // gera 3 variantes do token: original, UPPERCASE e lowercase. Isso
+  // cobre case-sensitivity em PostgreSQL (SQLite ja eh case-insensitive
+  // em ASCII por default — variantes redundantes mas inofensivas).
   const andClauses: Array<Record<string, unknown>> = tokens.map((token) => {
     const tokenNormalized = normalizeForSearch(token);
+    const tokenUpper = token.toUpperCase();
+    const tokenLower = token.toLowerCase();
     const orClauses: Array<Record<string, unknown>> = [];
     for (const field of fields) {
       const normalizedField = mapToNormalizedField(field);
@@ -113,9 +120,10 @@ export function buildSearchWhere(
         // Campo tem versao Normalized: usa ela com token normalizado
         orClauses.push(buildContainsClause(normalizedField, tokenNormalized));
       }
-      // Tambem busca no campo original (cobre dados antigos sem o normalized
-      // populado e tambem campos como description, code, email).
+      // Busca no campo original com 3 variantes (case-insensitive defensiva)
       orClauses.push(buildContainsClause(field, token));
+      if (tokenUpper !== token) orClauses.push(buildContainsClause(field, tokenUpper));
+      if (tokenLower !== token) orClauses.push(buildContainsClause(field, tokenLower));
     }
     // Se o token tem digitos, busca tambem por digitos puros nos campos numericos
     const tokenDigits = token.replace(/\D/g, "");
