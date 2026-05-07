@@ -294,13 +294,19 @@ export function PaymentForm({ open, onOpenChange, payment, onSuccess }: PaymentF
   }, [selectedContractId, contracts, watchDueDate, isEditing, manualProrata]);
 
   // Recalculate when entries, selection, or prorataDias changes
+  // IMPORTANTE: NAO recalcula em modo edicao — recalculateValue
+  // sobrescreve as notes (com lancamentos), e em edicao
+  // selectedEntryIds comeca vazio (nao reidrata das notes), entao
+  // qualquer mudanca de outro campo (dueDate, paidAt, etc) ia
+  // apagar a lista de lancamentos do breakdown.
   useEffect(() => {
+    if (isEditing) return;
     if (!selectedContractId) return;
     const contract = contracts.find((c) => c.id === selectedContractId);
     if (contract) {
       recalculateValue(contract, selectedEntryIds);
     }
-  }, [selectedEntryIds, prorataDias, entries, contracts, selectedContractId]);
+  }, [selectedEntryIds, prorataDias, entries, contracts, selectedContractId, isEditing]);
 
   function recalculateValue(contract: ContractOption, entryIds: Set<string>) {
     const condoFee = contract.property?.condoFee || 0;
