@@ -188,16 +188,28 @@ export async function consolidateIRRFByOwnerMonth(
             if (oe.notes) {
               try { notes = JSON.parse(oe.notes); } catch {}
             }
+            // sharePercent vem das notes ou e 100 quando ausente (sem coproprietarios)
+            const sharePctRaw = (notes as any).sharePercent;
+            const sharePct = typeof sharePctRaw === "number" ? sharePctRaw : 100;
+            const isCoOwner = sharePct < 100;
+            // Mantemos compatibilidade com o formato existente: notes.irrfValue
+            // e notes.netToOwner sao do CONTRATO TODO (o demonstrativo aplica
+            // shareRatio na hora de exibir). Nao podemos sobrescrever value
+            // de OwnerEntry coproprietaria com o netToOwner total — value
+            // da OwnerEntry deve continuar sendo a parte do coproprietario.
             notes.irrfValue = d.irrfValue;
             notes.irrfRate = g.irrfRate;
             notes.netToOwner = d.netToOwner;
             notes.irrfConsolidatedAt = new Date().toISOString();
+            const dataToUpdate: Record<string, unknown> = { notes: JSON.stringify(notes) };
+            if (!isCoOwner) {
+              // Sem coproprietarios: value = netToOwner (mesmo comportamento de antes)
+              dataToUpdate.value = d.netToOwner;
+            }
+            // Caso coproprietario: NAO mexer em value — mantem o rateio original
             await tx.ownerEntry.update({
               where: { id: oe.id },
-              data: {
-                value: d.netToOwner,
-                notes: JSON.stringify(notes),
-              },
+              data: dataToUpdate,
             });
           }
         }
