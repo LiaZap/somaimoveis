@@ -181,12 +181,15 @@ export async function GET(request: NextRequest) {
     status: "PENDENTE",
     ownerId: { in: ownerIds },
   };
-  // Se filtro de mes, pegar debitos do mesmo mes ou anteriores (acumulados)
-  // Inclui débitos sem data OU com data anterior ao fim do mês
+  // Filtro de mes: lancamento vinculado ao mes — debito do mes 04 nao
+  // aparece no mes 05. Se o repasse de 04 nao foi fechado, eventual saldo
+  // negativo cai como SALDO_NEGATIVO no mes seguinte (carry-forward
+  // explicito via PATCH /api/repasses linhas 297+).
   if (month && /^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split("-").map(Number);
-    debitWhere.NOT = {
-      dueDate: { gte: new Date(y, m, 1) },
+    debitWhere.dueDate = {
+      gte: new Date(y, m - 1, 1),
+      lt: new Date(y, m, 1),
     };
   }
   const debitEntries = await prisma.ownerEntry.findMany({
@@ -303,6 +306,42 @@ export async function PATCH(request: NextRequest) {
     data,
   });
 
+  // Quando o admin marca repasse como PAGO, marca tambem todos os debitos
+  // PENDENTES do mesmo (owner, mes) — eles foram processados junto. Lei do
+  // Leo: "no momento que o lancamento foi descontado do cliente, ele tem
+  // que entender que ja foi pago — nao vejo necessidade do status nos
+  // lancamentos, eles devem se alinhar automaticamente".
+  let debitsAutoMarked = 0;
+  if (status === "PAGO") {
+    const markedForDebits = await prisma.ownerEntry.findMany({
+      where: { id: { in: entryIds } },
+      select: { ownerId: true, dueDate: true },
+    });
+    const ownerMonths = new Set<string>();
+    const ownerMonthList: { ownerId: string; monthStart: Date; monthEnd: Date }[] = [];
+    for (const e of markedForDebits) {
+      if (!e.dueDate) continue;
+      const monthStart = new Date(e.dueDate.getFullYear(), e.dueDate.getMonth(), 1);
+      const monthEnd = new Date(e.dueDate.getFullYear(), e.dueDate.getMonth() + 1, 1);
+      const key = `${e.ownerId}_${monthStart.toISOString()}`;
+      if (ownerMonths.has(key)) continue;
+      ownerMonths.add(key);
+      ownerMonthList.push({ ownerId: e.ownerId, monthStart, monthEnd });
+    }
+    for (const om of ownerMonthList) {
+      const debitUpdate = await prisma.ownerEntry.updateMany({
+        where: {
+          ownerId: om.ownerId,
+          type: "DEBITO",
+          status: "PENDENTE",
+          dueDate: { gte: om.monthStart, lt: om.monthEnd },
+        },
+        data: { status: "PAGO", paidAt: new Date() },
+      });
+      debitsAutoMarked += debitUpdate.count;
+    }
+  }
+
   // Se marcou como PAGO, verificar se algum proprietário ficou negativado
   // e criar débito automático para o mês seguinte
   const carryForwardResults: { owner: string; valor: number }[] = [];
@@ -379,7 +418,10 @@ export async function PATCH(request: NextRequest) {
 
   return NextResponse.json({
     updated: updated.count,
-    message: `${updated.count} repasse(s) atualizado(s) para ${status}`,
+    debitsAutoMarked,
+    message:
+      `${updated.count} repasse(s) atualizado(s) para ${status}` +
+      (debitsAutoMarked > 0 ? ` + ${debitsAutoMarked} débito(s) marcados como PAGO` : ""),
     carryForward: carryForwardResults.length > 0 ? carryForwardResults : undefined,
   });
 }
