@@ -72,7 +72,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const ambiente: Ambiente = settings.ambiente === "PRODUCAO" ? "PRODUCAO" : "HOMOLOGACAO";
+  // Ambiente: aceita override via body (util pra testes pontuais).
+  // Default usa o configurado em settings.ambiente.
+  const ambienteBody = typeof body.ambiente === "string" ? body.ambiente.toUpperCase() : null;
+  const ambiente: Ambiente =
+    ambienteBody === "PRODUCAO" ? "PRODUCAO" :
+    ambienteBody === "HOMOLOGACAO" ? "HOMOLOGACAO" :
+    settings.ambiente === "PRODUCAO" ? "PRODUCAO" : "HOMOLOGACAO";
 
   // Carrega os owner entries
   const entriesRaw = await prisma.ownerEntry.findMany({
