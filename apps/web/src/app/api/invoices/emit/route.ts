@@ -80,6 +80,13 @@ export async function POST(request: NextRequest) {
     ambienteBody === "HOMOLOGACAO" ? "HOMOLOGACAO" :
     settings.ambiente === "PRODUCAO" ? "PRODUCAO" : "HOMOLOGACAO";
 
+  // Override do regime tributario somente pra teste/diagnostico (E0160).
+  // Aceita "SIMPLES_NACIONAL" | "LUCRO_PRESUMIDO" | "LUCRO_REAL" | "MEI".
+  // Se nao informado, usa o regime de fiscalSettings.
+  const regimeOverride = typeof body.regimeTributarioOverride === "string"
+    ? body.regimeTributarioOverride.toUpperCase()
+    : null;
+
   // Carrega os owner entries
   const entriesRaw = await prisma.ownerEntry.findMany({
     where: { id: { in: ownerEntryIds } },
@@ -192,7 +199,7 @@ export async function POST(request: NextRequest) {
             uf: settings.state || "RS",
             cep: (settings.zipCode || "96810-202").replace(/\D/g, ""),
           },
-          regimeTributario: (settings.regimeTributario as any) || "SIMPLES_NACIONAL",
+          regimeTributario: (regimeOverride || (settings.regimeTributario as any) || "SIMPLES_NACIONAL"),
         },
         tomador: {
           tipo: tomadorTipo,
