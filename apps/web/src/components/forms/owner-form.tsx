@@ -791,8 +791,8 @@ export function OwnerForm({ open, onOpenChange, owner, onSuccess }: OwnerFormPro
             </p>
 
             {beneficiaries.map((b, i) => (
-              <div key={i} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end p-3 border rounded-md">
-                <div className="space-y-1 sm:col-span-4">
+              <div key={i} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-end p-3 border rounded-md">
+                <div className="space-y-1 col-span-2 sm:col-span-3">
                   <Label className="text-xs">Nome</Label>
                   <Input
                     placeholder="Nome do beneficiário"
@@ -800,7 +800,7 @@ export function OwnerForm({ open, onOpenChange, owner, onSuccess }: OwnerFormPro
                     onChange={(e) => updateBeneficiary(i, { name: e.target.value })}
                   />
                 </div>
-                <div className="space-y-1 sm:col-span-3">
+                <div className="space-y-1 col-span-1 sm:col-span-2">
                   <Label className="text-xs">Tipo PIX</Label>
                   <Select
                     value={b.pixKeyType}
@@ -818,7 +818,7 @@ export function OwnerForm({ open, onOpenChange, owner, onSuccess }: OwnerFormPro
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1 sm:col-span-3">
+                <div className="space-y-1 col-span-1 sm:col-span-4">
                   <Label className="text-xs">Chave PIX</Label>
                   <Input
                     placeholder="Chave PIX"
@@ -826,8 +826,8 @@ export function OwnerForm({ open, onOpenChange, owner, onSuccess }: OwnerFormPro
                     onChange={(e) => updateBeneficiary(i, { pixKey: e.target.value })}
                   />
                 </div>
-                <div className="space-y-1 sm:col-span-1">
-                  <Label className="text-xs">%</Label>
+                <div className="space-y-1 col-span-1 sm:col-span-2">
+                  <Label className="text-xs">% do líquido</Label>
                   <Input
                     type="number"
                     step="0.01"
@@ -838,7 +838,7 @@ export function OwnerForm({ open, onOpenChange, owner, onSuccess }: OwnerFormPro
                     onChange={(e) => updateBeneficiary(i, { percentage: e.target.value })}
                   />
                 </div>
-                <div className="sm:col-span-1">
+                <div className="col-span-1 sm:col-span-1 flex justify-end">
                   <Button
                     type="button"
                     variant="ghost"
