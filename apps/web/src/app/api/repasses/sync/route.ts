@@ -4,9 +4,12 @@ import { requireAdmin, isAuthError } from "@/lib/api-auth";
 
 /**
  * POST /api/repasses/sync?month=YYYY-MM
- * Sincroniza os repasses para todos os pagamentos PAGO do mes que ainda nao
- * tem uma OwnerEntry REPASSE correspondente. Util para corrigir pagamentos
- * legados ou criados manualmente fora do fluxo /api/billing/generate.
+ * Sincroniza os repasses para TODOS os pagamentos do mes (PAGO, PENDENTE,
+ * ATRASADO, PARCIAL) que ainda nao tem uma OwnerEntry REPASSE correspondente.
+ * O REPASSE e criado com status PENDENTE — quando o boleto nao estiver
+ * PAGO, a UI mostra os badges "Boleto nao pago"/"Boleto vencido" (Fase 1).
+ * Util pra corrigir contratos cujo billing/generate falhou silenciosamente
+ * ou cujo Payment foi criado por fluxos manuais.
  *
  * Apenas ADMIN — acao destrutiva (cria registros).
  */
@@ -32,10 +35,11 @@ export async function POST(request: NextRequest) {
     const monthStart = new Date(targetYear, targetMonth, 1);
     const monthEnd = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59, 999);
 
-    // Buscar todos os pagamentos PAGO do mes com contratoId e ownerId
+    // Buscar TODOS os pagamentos do mes (qualquer status exceto CANCELADO)
+    // O REPASSE e criado como PENDENTE; o badge da UI reflete o paymentStatus.
     const payments = await prisma.payment.findMany({
       where: {
-        status: "PAGO",
+        status: { not: "CANCELADO" },
         dueDate: { gte: monthStart, lte: monthEnd },
       },
       select: {
@@ -184,7 +188,7 @@ export async function POST(request: NextRequest) {
       repassesCriados: criados,
       mensagem:
         criados === 0
-          ? "Nenhum repasse criado. Todos os pagamentos PAGO ja tem repasse correspondente."
+          ? "Nenhum repasse criado. Todos os pagamentos do mes ja tem repasse correspondente."
           : `${criados} repasse(s) criado(s) com sucesso.`,
       detalhes,
     });
