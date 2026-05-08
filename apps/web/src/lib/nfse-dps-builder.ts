@@ -214,12 +214,30 @@ export function buildDpsXml(params: DpsParams): { xml: string; idDps: string } {
   return { xml: xml.trim(), idDps };
 }
 
-/** Formata data como ISO 8601 com offset de Brasilia (-03:00) */
+/** Formata data como ISO 8601 com offset de Brasilia (-03:00).
+ *
+ * Importante: usa `Intl.DateTimeFormat` com timezone "America/Sao_Paulo"
+ * para extrair os componentes corretos independente do TZ do servidor.
+ * Antes usava `d.getHours()` (hora local), que em servidores em UTC
+ * concatenava a hora UTC com offset -03:00, gerando uma data 3h no
+ * futuro — rejeitada pelo Sefin Nacional com erro E0008.
+ */
 function formatDateIso(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
+  const fmt = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "00";
   return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}-03:00`
+    `${get("year")}-${get("month")}-${get("day")}` +
+    `T${get("hour")}:${get("minute")}:${get("second")}-03:00`
   );
 }
 
