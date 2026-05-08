@@ -71,6 +71,8 @@ export async function POST(request: NextRequest) {
           rentalValue: true,
           adminFeePercent: true,
           propertyId: true,
+          startDate: true,
+          endDate: true,
         },
       });
 
@@ -79,12 +81,40 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Calcular valor do repasse CORRETO:
-      // rentalValue - adminFee (taxa de administracao)
-      // NAO incluir: taxa bancaria, creditos, debitos diversos
+      // Pro-rata: se o boleto cai no primeiro/ultimo mes do contrato, o
+      // valor real cobrado do inquilino e proporcional aos dias. O sync
+      // PRECISA replicar essa logica — antes usava rentalValue cheio e
+      // gerava REPASSE divergente do que o boleto cobrou (caso CTR-137:
+      // Aluguel 15/30 dias = R$ 1.925, mas REPASSE estava R$ 3.465).
+      const refDate = p.dueDate;
+      const refY = refDate.getFullYear();
+      const refM = refDate.getMonth();
+      const csY = contract.startDate.getFullYear();
+      const csM = contract.startDate.getMonth();
+      const csDay = contract.startDate.getDate();
+      const ceY = contract.endDate.getFullYear();
+      const ceM = contract.endDate.getMonth();
+      const ceDay = contract.endDate.getDate();
+      const isFirstMonth = csY === refY && csM === refM;
+      const isLastMonth = ceY === refY && ceM === refM;
+      let prorataDays = 30;
+      let isProrata = false;
+      if (isFirstMonth && csDay > 1) {
+        isProrata = true;
+        prorataDays = 30 - csDay + 1;
+      } else if (isLastMonth && ceDay < 30) {
+        isProrata = true;
+        prorataDays = ceDay;
+      }
+      const dailyRate = contract.rentalValue / 30;
+      const prorataRentalValue = isProrata
+        ? Math.round(dailyRate * prorataDays * 100) / 100
+        : contract.rentalValue;
+
+      // Calcular valor do repasse com base no aluguel pro-rata (nao cheio).
       const adminPct = contract.adminFeePercent || 10;
-      const adminFeeValue = Math.round(contract.rentalValue * (adminPct / 100) * 100) / 100;
-      const calculatedOwnerValue = Math.round((contract.rentalValue - adminFeeValue) * 100) / 100;
+      const adminFeeValue = Math.round(prorataRentalValue * (adminPct / 100) * 100) / 100;
+      const calculatedOwnerValue = Math.round((prorataRentalValue - adminFeeValue) * 100) / 100;
 
       // Preferir splitOwnerValue do pagamento se existir (foi calculado corretamente em billing/generate)
       const splitValue = p.splitOwnerValue ?? 0;
@@ -120,7 +150,10 @@ export async function POST(request: NextRequest) {
 
         if (canAutoFix) {
           const notesData = {
-            aluguelBruto: contract.rentalValue,
+            aluguelBruto: prorataRentalValue,
+            aluguelOriginal: isProrata ? contract.rentalValue : undefined,
+            isProrata,
+            prorataDias: isProrata ? prorataDays : undefined,
             adminFeePercent: adminPct,
             adminFeeValue,
             irrfValue: p.irrfValue || undefined,
@@ -147,7 +180,10 @@ export async function POST(request: NextRequest) {
       const mLabel = `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 
       const notesData = {
-        aluguelBruto: contract.rentalValue,
+        aluguelBruto: prorataRentalValue,
+        aluguelOriginal: isProrata ? contract.rentalValue : undefined,
+        isProrata,
+        prorataDias: isProrata ? prorataDays : undefined,
         adminFeePercent: adminPct,
         adminFeeValue,
         irrfValue: p.irrfValue || undefined,

@@ -237,6 +237,8 @@ export async function POST(request: NextRequest) {
             rentalValue: true,
             adminFeePercent: true,
             propertyId: true,
+            startDate: true,
+            endDate: true,
           },
         });
         if (contract) {
@@ -244,6 +246,32 @@ export async function POST(request: NextRequest) {
           const mLabel = `${String(dueDate.getMonth() + 1).padStart(2, "0")}/${dueDate.getFullYear()}`;
           let repasseCriado = false;
           let entriesPropagadas = 0;
+
+          // Pro-rata: calcula aluguel proporcional se boleto cai no
+          // primeiro/ultimo mes do contrato
+          const refY = dueDate.getFullYear();
+          const refM = dueDate.getMonth();
+          const csY = contract.startDate.getFullYear();
+          const csM = contract.startDate.getMonth();
+          const csDay = contract.startDate.getDate();
+          const ceY = contract.endDate.getFullYear();
+          const ceM = contract.endDate.getMonth();
+          const ceDay = contract.endDate.getDate();
+          const isFirstMonth = csY === refY && csM === refM;
+          const isLastMonth = ceY === refY && ceM === refM;
+          let prorataDays = 30;
+          let isProrata = false;
+          if (isFirstMonth && csDay > 1) {
+            isProrata = true;
+            prorataDays = 30 - csDay + 1;
+          } else if (isLastMonth && ceDay < 30) {
+            isProrata = true;
+            prorataDays = ceDay;
+          }
+          const dailyRate = contract.rentalValue / 30;
+          const prorataRentalValue = isProrata
+            ? Math.round(dailyRate * prorataDays * 100) / 100
+            : contract.rentalValue;
 
           // 1) Cria OwnerEntry REPASSE se ainda nao existe pra (contractId, dueDate)
           const existingRepasse = await prisma.ownerEntry.findFirst({
@@ -254,14 +282,9 @@ export async function POST(request: NextRequest) {
             },
           });
           if (!existingRepasse) {
-            const splitOwnerValue = payment.splitOwnerValue ?? (() => {
-              const adminPct = contract.adminFeePercent || 10;
-              const adminFee = Math.round(contract.rentalValue * (adminPct / 100) * 100) / 100;
-              return Math.round((contract.rentalValue - adminFee) * 100) / 100;
-            })();
-            const adminFeeValue = Math.round(
-              contract.rentalValue * ((contract.adminFeePercent || 10) / 100) * 100
-            ) / 100;
+            const adminPct = contract.adminFeePercent || 10;
+            const adminFeeValue = Math.round(prorataRentalValue * (adminPct / 100) * 100) / 100;
+            const splitOwnerValue = payment.splitOwnerValue ?? Math.round((prorataRentalValue - adminFeeValue) * 100) / 100;
             await prisma.ownerEntry.create({
               data: {
                 type: "CREDITO",
@@ -274,8 +297,11 @@ export async function POST(request: NextRequest) {
                 contractId: payment.contractId,
                 propertyId: contract.propertyId || null,
                 notes: JSON.stringify({
-                  aluguelBruto: contract.rentalValue,
-                  adminFeePercent: contract.adminFeePercent || 10,
+                  aluguelBruto: prorataRentalValue,
+                  aluguelOriginal: isProrata ? contract.rentalValue : undefined,
+                  isProrata,
+                  prorataDias: isProrata ? prorataDays : undefined,
+                  adminFeePercent: adminPct,
                   adminFeeValue,
                   netToOwner: splitOwnerValue,
                   autoCreated: true,
