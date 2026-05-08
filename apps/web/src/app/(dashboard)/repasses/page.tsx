@@ -50,6 +50,7 @@ import {
   Copy,
   FileText,
   Shield,
+  Pencil,
   X,
   AlertCircle,
   Plus,
@@ -210,11 +211,30 @@ function getBoletoStatusBadge(
   };
 }
 
-/** True quando o repasse esta liberado para pagamento (boleto pago ou sem vinculo). */
+/** True quando o repasse esta liberado para pagamento (boleto pago, sem
+ *  vinculo, ou marcado manualmente como "aluguel garantido este mes"). */
 function isRepassReleased(entry: OwnerEntry): boolean {
   if (!["REPASSE", "GARANTIA"].includes(entry.category)) return true;
+  // Override manual: imobiliaria garantiu o aluguel deste mes
+  if (entry.notes) {
+    try {
+      const n = JSON.parse(entry.notes);
+      if (n.aluguelGarantidoMes === true) return true;
+    } catch {}
+  }
   if (entry.paymentStatus == null) return true;
   return entry.paymentStatus === "PAGO";
+}
+
+/** Le a flag "aluguel garantido este mes" das notes da OwnerEntry. */
+function isAluguelGarantidoMes(entry: OwnerEntry): boolean {
+  if (!entry.notes) return false;
+  try {
+    const n = JSON.parse(entry.notes);
+    return n.aluguelGarantidoMes === true;
+  } catch {
+    return false;
+  }
 }
 
 export default function RepassesPage() {
@@ -708,6 +728,70 @@ export default function RepassesPage() {
       fetchRepasses();
     } catch (err: any) {
       toast.error(err.message || "Erro ao excluir lançamento");
+    }
+  }
+
+  async function handleEditEntryValue(entry: OwnerEntry) {
+    const novoValorStr = window.prompt(
+      `Editar valor de "${entry.description}"\n\nValor atual: ${formatCurrency(entry.value)}\n\nNovo valor (R$):`,
+      entry.value.toFixed(2).replace(".", ",")
+    );
+    if (!novoValorStr) return;
+    const novoValor = parseFloat(novoValorStr.replace(",", "."));
+    if (!Number.isFinite(novoValor) || novoValor < 0) {
+      toast.error("Valor inválido");
+      return;
+    }
+    const novaDesc = window.prompt(
+      "Descrição (opcional, deixe igual se não quiser mudar):",
+      entry.description
+    );
+    if (novaDesc === null) return; // cancelou
+    try {
+      const res = await fetch(`/api/owner-entries/${entry.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: novoValor, description: novaDesc.trim() || entry.description }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Erro ao salvar");
+      }
+      toast.success("Lançamento atualizado");
+      fetchRepasses();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao atualizar lançamento");
+    }
+  }
+
+  // Marca/desmarca a flag "aluguel garantido este mes" no notes JSON da
+  // OwnerEntry. Quando ativa, o repasse pode ser liberado mesmo sem o
+  // pagamento do inquilino (a imobiliaria adianta).
+  async function handleToggleAluguelGarantido(entry: OwnerEntry) {
+    let notesData: Record<string, unknown> = {};
+    if (entry.notes) {
+      try { notesData = JSON.parse(entry.notes); } catch {}
+    }
+    const novoEstado = !notesData.aluguelGarantidoMes;
+    notesData.aluguelGarantidoMes = novoEstado;
+    try {
+      const res = await fetch(`/api/owner-entries/${entry.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: JSON.stringify(notesData) }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Erro ao salvar");
+      }
+      toast.success(
+        novoEstado
+          ? "Aluguel garantido pela imobiliária neste mês"
+          : "Aluguel garantido desativado neste mês"
+      );
+      fetchRepasses();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao atualizar");
     }
   }
 
@@ -1845,15 +1929,46 @@ export default function RepassesPage() {
                                       {formatCurrency(entry.value)}
                                     </TableCell>
                                     <TableCell>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6 text-muted-foreground hover:text-red-600"
-                                        title="Excluir lançamento"
-                                        onClick={() => handleDeleteEntry(entry.id, entry.description)}
-                                      >
-                                        <X className="h-3.5 w-3.5" />
-                                      </Button>
+                                      <div className="flex items-center gap-0.5">
+                                        {["REPASSE", "GARANTIA"].includes(entry.category) && entry.contractId && (
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className={cn(
+                                              "h-6 w-6",
+                                              isAluguelGarantidoMes(entry)
+                                                ? "text-emerald-600 hover:text-emerald-700"
+                                                : "text-muted-foreground hover:text-emerald-600"
+                                            )}
+                                            title={
+                                              isAluguelGarantidoMes(entry)
+                                                ? "Aluguel garantido pela imobiliária neste mês (clique para desativar)"
+                                                : "Marcar como aluguel garantido pela imobiliária neste mês"
+                                            }
+                                            onClick={() => handleToggleAluguelGarantido(entry)}
+                                          >
+                                            <Shield className="h-3.5 w-3.5" />
+                                          </Button>
+                                        )}
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-6 w-6 text-muted-foreground hover:text-blue-600"
+                                          title="Editar valor / descrição"
+                                          onClick={() => handleEditEntryValue(entry)}
+                                        >
+                                          <Pencil className="h-3.5 w-3.5" />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-6 w-6 text-muted-foreground hover:text-red-600"
+                                          title="Excluir lançamento"
+                                          onClick={() => handleDeleteEntry(entry.id, entry.description)}
+                                        >
+                                          <X className="h-3.5 w-3.5" />
+                                        </Button>
+                                      </div>
                                     </TableCell>
                                   </TableRow>
                                 ))}
