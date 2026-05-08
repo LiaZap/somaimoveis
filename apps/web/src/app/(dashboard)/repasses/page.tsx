@@ -1777,7 +1777,7 @@ export default function RepassesPage() {
                                   )}
                                   {totalAdminFee > 0 && (
                                     <span className="text-orange-600 font-medium">
-                                      Taxa adm ({adminFeePercent}%): -{formatCurrency(Math.round(totalAdminFee * 100) / 100)}
+                                      Taxa adm: {adminFeePercent}%
                                     </span>
                                   )}
                                   {totalIntermediacao > 0 && (
@@ -1884,7 +1884,7 @@ export default function RepassesPage() {
                                                   <TooltipContent side="bottom" className="max-w-xs p-3 space-y-1">
                                                     <p className="font-medium border-b pb-1 mb-1 text-xs">Composição do Repasse</p>
                                                     <p className="text-xs">Aluguel bruto: {formatCurrency(n.aluguelBruto)}</p>
-                                                    <p className="text-xs text-red-600">- Taxa adm ({n.adminFeePercent}%): {formatCurrency(n.adminFeeValue)}</p>
+                                                    <p className="text-xs text-red-600">- Taxa adm: {n.adminFeePercent}%</p>
                                                     {n.intermediacao > 0 && (
                                                       <p className="text-xs text-red-600">- Intermediação: {formatCurrency(n.intermediacao)}</p>
                                                     )}
