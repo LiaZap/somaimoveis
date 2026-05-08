@@ -755,6 +755,40 @@ export default function RepassesPage() {
       fetch("/api/repasses/cnab240").then(r => r.json()).then(d => {
         if (d.proximoSequencial) setCnabNextSeq(d.proximoSequencial);
       }).catch(() => {});
+
+      // Pergunta se quer marcar os repasses incluidos no CNAB como PAGO.
+      // O proprio CNAB envia o pagamento — assim que o admin confirmar
+      // o envio do arquivo pro Sicredi, faz sentido marcar como pago
+      // pra nao precisar voltar e marcar manualmente.
+      const entryIdsNoCnab = cnabGroups.flatMap((g) =>
+        g.entries
+          .filter((e) => e.status === "PENDENTE" && isRepassReleased(e))
+          .map((e) => e.id)
+      );
+      if (entryIdsNoCnab.length > 0) {
+        const confirmou = window.confirm(
+          `CNAB gerado. Marcar os ${entryIdsNoCnab.length} repasse(s) incluidos como PAGOS agora?\n\n` +
+          `Use isso depois que enviar o arquivo pro Sicredi. Os debitos do mes desses proprietarios tambem serao marcados como pagos automaticamente.`
+        );
+        if (confirmou) {
+          try {
+            const r = await fetch("/api/repasses", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ entryIds: entryIdsNoCnab, status: "PAGO" }),
+            });
+            const data = await r.json();
+            if (r.ok) {
+              toast.success(data.message || "Repasses marcados como PAGOS");
+              fetchRepasses();
+            } else {
+              toast.error(data.error || "Erro ao marcar repasses como PAGOS");
+            }
+          } catch {
+            toast.error("Erro ao marcar repasses como PAGOS");
+          }
+        }
+      }
     } catch (error) {
       toast.error("Erro ao gerar remessa CNAB 240");
     } finally {
