@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
         netToOwner: true,
         irrfValue: true,
         irrfRate: true,
+        notes: true,
       },
     });
 
@@ -81,35 +82,66 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Pro-rata: se o boleto cai no primeiro/ultimo mes do contrato, o
-      // valor real cobrado do inquilino e proporcional aos dias. O sync
-      // PRECISA replicar essa logica — antes usava rentalValue cheio e
-      // gerava REPASSE divergente do que o boleto cobrou (caso CTR-137:
-      // Aluguel 15/30 dias = R$ 1.925, mas REPASSE estava R$ 3.465).
-      const refDate = p.dueDate;
-      const refY = refDate.getFullYear();
-      const refM = refDate.getMonth();
-      const csY = contract.startDate.getFullYear();
-      const csM = contract.startDate.getMonth();
-      const csDay = contract.startDate.getDate();
-      const ceY = contract.endDate.getFullYear();
-      const ceM = contract.endDate.getMonth();
-      const ceDay = contract.endDate.getDate();
-      const isFirstMonth = csY === refY && csM === refM;
-      const isLastMonth = ceY === refY && ceM === refM;
-      let prorataDays = 30;
+      // Pro-rata — fonte da verdade em ordem de prioridade:
+      //   1. payment.notes.aluguel (billing/generate ou form ja calculou)
+      //   2. payment.notes.aluguelBruto (formato alternativo)
+      //   3. Fallback: detecta pelo contract.startDate/endDate
+      //      comparando contra (a) targetMonth (param da request) ou
+      //      (b) dueDate.month - 1 (competencia anterior ao vencimento)
+      let prorataRentalValue = contract.rentalValue;
       let isProrata = false;
-      if (isFirstMonth && csDay > 1) {
-        isProrata = true;
-        prorataDays = 30 - csDay + 1;
-      } else if (isLastMonth && ceDay < 30) {
-        isProrata = true;
-        prorataDays = ceDay;
+      let prorataDays = 30;
+
+      if (p.notes) {
+        try {
+          const n = JSON.parse(p.notes);
+          const aluguelDoNote = typeof n.aluguel === "number" && n.aluguel > 0
+            ? n.aluguel
+            : typeof n.aluguelBruto === "number" && n.aluguelBruto > 0
+            ? n.aluguelBruto
+            : null;
+          if (aluguelDoNote && aluguelDoNote < contract.rentalValue - 0.01) {
+            prorataRentalValue = aluguelDoNote;
+            isProrata = true;
+            prorataDays = typeof n.prorataDias === "number" ? n.prorataDias : 0;
+          }
+        } catch {}
       }
-      const dailyRate = contract.rentalValue / 30;
-      const prorataRentalValue = isProrata
-        ? Math.round(dailyRate * prorataDays * 100) / 100
-        : contract.rentalValue;
+
+      // Fallback: tenta detectar pelo contract vs (targetMonth, dueDate-1)
+      if (!isProrata) {
+        const csY = contract.startDate.getFullYear();
+        const csM = contract.startDate.getMonth();
+        const csDay = contract.startDate.getDate();
+        const ceY = contract.endDate.getFullYear();
+        const ceM = contract.endDate.getMonth();
+        const ceDay = contract.endDate.getDate();
+        const dueY = p.dueDate.getFullYear();
+        const dueM = p.dueDate.getMonth();
+        // Tenta com targetMonth/Year (param da request) e tambem com
+        // mes-1 do vencimento (caso payment vence em maio mas competencia e abril)
+        const candidateMonths = [
+          { y: targetYear, m: targetMonth },
+          { y: dueY, m: dueM === 0 ? 11 : dueM - 1, fallbackForJan: dueM === 0 ? dueY - 1 : dueY },
+        ];
+        for (const cand of candidateMonths) {
+          const cy = cand.fallbackForJan ?? cand.y;
+          const cm = cand.m;
+          if (csY === cy && csM === cm && csDay > 1) {
+            isProrata = true;
+            prorataDays = 30 - csDay + 1;
+            break;
+          } else if (ceY === cy && ceM === cm && ceDay < 30) {
+            isProrata = true;
+            prorataDays = ceDay;
+            break;
+          }
+        }
+        if (isProrata) {
+          const dailyRate = contract.rentalValue / 30;
+          prorataRentalValue = Math.round(dailyRate * prorataDays * 100) / 100;
+        }
+      }
 
       // Calcular valor do repasse com base no aluguel pro-rata (nao cheio).
       const adminPct = contract.adminFeePercent || 10;
@@ -133,18 +165,22 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      // Se ja existe, verificar se foi auto-criado com valor errado e pode ser corrigido
+      // Se ja existe, verifica se pode ser corrigido. Regras:
+      //  - Status PENDENTE (PAGO nao mexe — repasse ja efetivado)
+      //  - Value divergente em mais de 1 centavo
+      //  - notes.editedManually !== true (admin pode marcar pra evitar sobrescrita)
       if (existing) {
-        // So atualiza se: foi auto-criado, esta PENDENTE, e o valor atual difere do correto
         let canAutoFix = false;
-        if (existing.status === "PENDENTE" && existing.notes) {
-          try {
-            const n = JSON.parse(existing.notes);
-            if (n.autoCreated === true) {
-              canAutoFix = Math.abs(existing.value - ownerValue) > 0.01;
-            }
-          } catch {
-            // ignore
+        if (existing.status === "PENDENTE") {
+          let editedManually = false;
+          if (existing.notes) {
+            try {
+              const n = JSON.parse(existing.notes);
+              editedManually = n.editedManually === true;
+            } catch {}
+          }
+          if (!editedManually && Math.abs(existing.value - ownerValue) > 0.01) {
+            canAutoFix = true;
           }
         }
 
