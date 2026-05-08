@@ -466,10 +466,34 @@ export default function RepassesPage() {
     }
   }
 
+  // Auto-sync silencioso quando o admin abre /repasses ou troca de mes:
+  // garante que todo Payment do mes (PAGO, PENDENTE, ATRASADO) tenha
+  // OwnerEntry REPASSE correspondente. Cobre o caso de contratos cujo
+  // billing/generate falhou ou Payments criados manualmente.
+  async function autoSyncAndFetch() {
+    if (canAdmin && month) {
+      try {
+        const res = await fetch(`/api/repasses/sync?month=${month}`, { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.repassesCriados > 0) {
+            toast.info(
+              `${data.repassesCriados} repasse(s) sincronizado(s) automaticamente — boletos atrasados/pendentes agora aparecem na lista.`
+            );
+          }
+        }
+      } catch {
+        // sync silencioso falhou — segue pro fetch normal
+      }
+    }
+    await fetchRepasses();
+  }
+
   useEffect(() => {
-    fetchRepasses();
+    autoSyncAndFetch();
     setSelectedEntries(new Set());
     setExpandedOwners(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month, activeTab]);
 
   useEffect(() => {
