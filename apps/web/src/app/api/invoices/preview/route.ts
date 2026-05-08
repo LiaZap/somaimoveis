@@ -97,6 +97,7 @@ export async function GET(request: NextRequest) {
     },
     regimeTributario: settings.regimeTributario === "SIMPLES_NACIONAL" ? 1
       : settings.regimeTributario === "MEI" ? 3 : 2,
+    simplesAliquota: settings.simplesAliquota || undefined,
   };
 
   const tomador: TomadorData = {

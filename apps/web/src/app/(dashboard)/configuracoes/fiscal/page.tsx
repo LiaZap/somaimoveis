@@ -34,6 +34,7 @@ interface FiscalSettings {
   aliquotaIss: number | null;
   regimeTributario: string | null;
   optanteSimples: boolean;
+  simplesAliquota: number | null;
   incentivadorCultural: boolean;
   retemIss: boolean;
   certificadoNome: string | null;
@@ -381,6 +382,29 @@ export default function ConfiguracoesFiscalPage() {
                 </Select>
               </div>
             </div>
+
+            {settings.regimeTributario === "SIMPLES_NACIONAL" && (
+              <div className="space-y-1.5 max-w-md">
+                <Label htmlFor="simplesAliquota">Alíquota efetiva do Simples Nacional (%)</Label>
+                <Input
+                  id="simplesAliquota"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={settings.simplesAliquota ?? ""}
+                  onChange={(e) =>
+                    update("simplesAliquota", e.target.value === "" ? null : parseFloat(e.target.value))
+                  }
+                  placeholder="Ex: 6"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Alíquota efetiva do mês corrente, calculada pela contadora com base na RBT12.
+                  Atualize sempre que a contadora informar uma nova alíquota — a NFS-e Nacional
+                  exige esse campo no XML pra prestadores Optantes do Simples.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <div className="flex items-center gap-2">

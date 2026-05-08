@@ -87,6 +87,13 @@ export async function POST(request: NextRequest) {
     ? body.regimeTributarioOverride.toUpperCase()
     : null;
 
+  // Override da aliquota efetiva do Simples Nacional. Util quando a
+  // contadora informa uma aliquota diferente do que esta em fiscalSettings.
+  // Aceita number ou string convertivel.
+  const simplesAliquotaOverride = body.simplesAliquota != null && body.simplesAliquota !== ""
+    ? Number(body.simplesAliquota)
+    : null;
+
   // Carrega os owner entries
   const entriesRaw = await prisma.ownerEntry.findMany({
     where: { id: { in: ownerEntryIds } },
@@ -200,6 +207,10 @@ export async function POST(request: NextRequest) {
             cep: (settings.zipCode || "96810-202").replace(/\D/g, ""),
           },
           regimeTributario: (regimeOverride || (settings.regimeTributario as any) || "SIMPLES_NACIONAL"),
+          simplesAliquota:
+            simplesAliquotaOverride && Number.isFinite(simplesAliquotaOverride) && simplesAliquotaOverride > 0
+              ? simplesAliquotaOverride
+              : settings.simplesAliquota || undefined,
         },
         tomador: {
           tipo: tomadorTipo,

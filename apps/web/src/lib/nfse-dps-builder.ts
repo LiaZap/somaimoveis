@@ -53,6 +53,10 @@ export interface PrestadorData {
   telefone?: string;
   /** 1=Simples Nacional, 2=Lucro Real/Presumido, 3=MEI */
   regimeTributario: 1 | 2 | 3;
+  /** Aliquota efetiva do Simples Nacional do mes (ex: 6 = 6%).
+   *  Obrigatoria no XML quando regimeTributario=1 (opSimpNac=1).
+   *  Varia conforme RBT12 da empresa. */
+  simplesAliquota?: number;
 }
 
 export interface TomadorData {
@@ -165,7 +169,11 @@ export function buildDpsXml(params: DpsParams): { xml: string; idDps: string } {
     <prest>
       <CNPJ>${onlyDigits(prestador.cnpj)}</CNPJ>
       <regTrib>
-        <opSimpNac>${prestador.regimeTributario === 1 ? "1" : "2"}</opSimpNac>
+        <opSimpNac>${prestador.regimeTributario === 1 ? "1" : "2"}</opSimpNac>${
+          prestador.regimeTributario === 1 && prestador.simplesAliquota && prestador.simplesAliquota > 0
+            ? `\n        <regApTribSN>1</regApTribSN>\n        <pAliqApl>${prestador.simplesAliquota.toFixed(4)}</pAliqApl>`
+            : ""
+        }
         <regEspTrib>0</regEspTrib>
       </regTrib>
     </prest>

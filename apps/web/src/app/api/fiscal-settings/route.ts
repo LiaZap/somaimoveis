@@ -71,6 +71,11 @@ export async function PUT(request: NextRequest) {
         ? null
         : parseFloat(body.aliquotaIss);
     }
+    if (body.simplesAliquota !== undefined) {
+      data.simplesAliquota = body.simplesAliquota === "" || body.simplesAliquota == null
+        ? null
+        : parseFloat(body.simplesAliquota);
+    }
     if (body.optanteSimples !== undefined) data.optanteSimples = !!body.optanteSimples;
     if (body.incentivadorCultural !== undefined) data.incentivadorCultural = !!body.incentivadorCultural;
     if (body.retemIss !== undefined) data.retemIss = !!body.retemIss;

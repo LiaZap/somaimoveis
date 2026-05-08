@@ -119,6 +119,10 @@ model FiscalSettings {
   cnae                 String?  // Codigo CNAE principal (ex: 6822-6/00)
   codigoServicoMunicipal String?  // LC 116/2003 (ex: 17.13)
   aliquotaIss          Float?   // % do ISS (ex: 5)
+  // Aliquota efetiva do Simples Nacional do mes corrente (varia conforme
+  // RBT12). Obrigatoria no XML do Padrao Nacional NFS-e quando
+  // opSimpNac=1. Admin atualiza mensalmente conforme a contadora informa.
+  simplesAliquota      Float?   // % do Simples (ex: 6 = 6%)
   regimeTributario     String?  // SIMPLES_NACIONAL | LUCRO_PRESUMIDO | LUCRO_REAL | MEI
   optanteSimples       Boolean  @default(false)
   incentivadorCultural Boolean  @default(false)

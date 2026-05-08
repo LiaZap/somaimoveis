@@ -51,6 +51,8 @@ export interface EmitirNFSeParams {
     email?: string;
     telefone?: string;
     regimeTributario: "SIMPLES_NACIONAL" | "LUCRO_PRESUMIDO" | "LUCRO_REAL" | "MEI";
+    /** Aliquota efetiva do Simples Nacional do mes (ex: 6 = 6%). */
+    simplesAliquota?: number;
   };
   tomador: {
     tipo: "PF" | "PJ";
@@ -160,6 +162,7 @@ export async function emitirNFSe(params: EmitirNFSeParams): Promise<EmitirNFSeRe
     telefone: params.prestador.telefone,
     regimeTributario: params.prestador.regimeTributario === "SIMPLES_NACIONAL" ? 1 :
                       params.prestador.regimeTributario === "MEI" ? 3 : 2,
+    simplesAliquota: params.prestador.simplesAliquota,
   };
 
   const tomador: TomadorData = {
