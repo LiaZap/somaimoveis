@@ -97,10 +97,21 @@ export async function POST(request: NextRequest) {
       totalPrevista: number;
       cobrado: number;
       falta: number;
+      contractMonthNumber: number;
+      isMes1: boolean;
       cabeNoMes: number;
       vaiCobrarAgora: number;
       novoSaldoPendente: number;
+      observacao?: string;
     }[] = [];
+
+    // Pra calcular mes 1 do contrato precisamos do startDate
+    const contractStarts = await prisma.contract.findMany({
+      where: { id: { in: contracts.map((c) => c.id) } },
+      select: { id: true, startDate: true },
+    });
+    const startMap: Record<string, Date> = {};
+    for (const cs of contractStarts) startMap[cs.id] = cs.startDate;
 
     for (const c of contracts) {
       const totalPrevista = Math.round(c.rentalValue * c.intermediationFee! / 100 * 100) / 100;
@@ -108,11 +119,26 @@ export async function POST(request: NextRequest) {
       const falta = Math.round((totalPrevista - cobrado) * 100) / 100;
       if (falta <= 0.01) continue;
 
+      // Regra do Leo: se mes de competencia for o 1o mes do contrato com
+      // intermediacao, taxa adm fica isenta (aluguel inteiro disponivel)
+      const startDate = startMap[c.id];
+      const csY = startDate.getFullYear();
+      const csM = startDate.getMonth();
+      const contractMonthNumber = (targetYear - csY) * 12 + (targetMonth - csM) + 1;
+      const isMes1 = contractMonthNumber === 1;
+
       const adminPct = c.adminFeePercent || 10;
-      const adminFee = Math.round(c.rentalValue * (adminPct / 100) * 100) / 100;
+      const adminFee = isMes1 ? 0 : Math.round(c.rentalValue * (adminPct / 100) * 100) / 100;
       const cabeNoMes = Math.round((c.rentalValue - adminFee) * 100) / 100;
       const vaiCobrarAgora = Math.min(falta, cabeNoMes);
       const novoSaldoPendente = Math.round((falta - vaiCobrarAgora) * 100) / 100;
+
+      let observacao: string | undefined;
+      if (isMes1) {
+        observacao = "Mês 1 do contrato — adm isenta (regra do Leo)";
+      } else if (contractMonthNumber > 1) {
+        observacao = `Mês ${contractMonthNumber} do contrato — adm já cobrada nos meses anteriores`;
+      }
 
       propostas.push({
         contractId: c.id,
@@ -121,9 +147,12 @@ export async function POST(request: NextRequest) {
         totalPrevista,
         cobrado,
         falta,
+        contractMonthNumber,
+        isMes1,
         cabeNoMes,
         vaiCobrarAgora: Math.round(vaiCobrarAgora * 100) / 100,
         novoSaldoPendente,
+        observacao,
       });
     }
 
