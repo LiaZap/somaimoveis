@@ -169,15 +169,34 @@ export async function POST(request: NextRequest) {
       //  - Status PENDENTE (PAGO nao mexe — repasse ja efetivado)
       //  - Value divergente em mais de 1 centavo
       //  - notes.editedManually !== true (admin pode marcar pra evitar sobrescrita)
+      //  - NAO eh coproprietario (sharePercent < 100 nas notes OU "(X%)" na
+      //    description). O sync nao sabe lidar com split — billing/generate
+      //    cria N OwnerEntries por contract+dueDate (uma por coproprietario)
+      //    e o findFirst aqui pega so uma; sobrescrever quebra o rateio.
       if (existing) {
         let canAutoFix = false;
         if (existing.status === "PENDENTE") {
           let editedManually = false;
+          let isCoOwner = false;
           if (existing.notes) {
             try {
               const n = JSON.parse(existing.notes);
               editedManually = n.editedManually === true;
+              const sharePctNotes = typeof n.sharePercent === "number" ? n.sharePercent : null;
+              if (sharePctNotes != null && sharePctNotes < 100) isCoOwner = true;
             } catch {}
+          }
+          if (!isCoOwner && existing.description) {
+            const m = existing.description.match(/\(([\d.,]+)%\)/);
+            const pct = m ? parseFloat(m[1].replace(",", ".")) : null;
+            if (pct != null && pct < 100) isCoOwner = true;
+          }
+          if (isCoOwner) {
+            detalhes.push({
+              payment: p.code,
+              result: "Repasse de coproprietario, sync nao mexe (preserva rateio)",
+            });
+            continue;
           }
           if (!editedManually && Math.abs(existing.value - ownerValue) > 0.01) {
             canAutoFix = true;
