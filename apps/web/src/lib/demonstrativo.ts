@@ -225,6 +225,12 @@ export async function buildDemonstrativo(
   }
 
   for (const e of entries) {
+    // Skip entries com value=0. Sao "lixo" — geralmente OwnerEntries
+    // que foram criadas e ajustadas pra 0 (anuladas) mas nao excluidas
+    // do banco. Sem esse skip, o demonstrativo ainda gera linhas de
+    // aluguel/admin baseado em notes.aluguelBruto, inflando o total.
+    if (e.value === 0 || e.value == null) continue;
+
     const refDate = e.paidAt || e.dueDate || monthStart;
     const dateStr = new Date(refDate).toLocaleDateString("pt-BR", { timeZone: "UTC" });
     const value = e.value;
