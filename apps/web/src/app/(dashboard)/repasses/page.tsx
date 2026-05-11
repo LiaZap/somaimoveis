@@ -562,10 +562,28 @@ export default function RepassesPage() {
     });
   }
 
+  // Determina se a entry pode ser selecionada no "Selecionar Todos":
+  //  - REPASSE/GARANTIA: usa isRepassReleased (boleto pago ou garantido)
+  //  - Outras categorias (IPTU, AGUA, LUZ, etc): so libera se o REPASSE
+  //    do MESMO contractId estiver liberado. Lei do Leo: nao adianta
+  //    repassar IPTU se o aluguel ainda nao foi pago — o inquilino nao
+  //    pagou e a imobiliaria nao recebeu nada pra repassar.
+  function isEntryReleasable(entry: OwnerEntry, groupEntries: OwnerEntry[]): boolean {
+    if (["REPASSE", "GARANTIA"].includes(entry.category)) {
+      return isRepassReleased(entry);
+    }
+    if (!entry.contractId) return true; // entry sem contrato (manual avulsa)
+    const repasseDoMesmoContract = groupEntries.find(
+      (e) => ["REPASSE", "GARANTIA"].includes(e.category) && e.contractId === entry.contractId
+    );
+    if (!repasseDoMesmoContract) return true; // sem REPASSE relacionado, libera
+    return isRepassReleased(repasseDoMesmoContract);
+  }
+
   function toggleSelectAll(ownerId: string, entries: OwnerEntry[]) {
     const targetStatus = isPagos ? "PAGO" : "PENDENTE";
     const pendingIds = entries
-      .filter((e) => e.status === targetStatus && isRepassReleased(e))
+      .filter((e) => e.status === targetStatus && isEntryReleasable(e, entries))
       .map((e) => e.id);
     const allSelected = pendingIds.every((id) => selectedEntries.has(id));
 
@@ -593,7 +611,7 @@ export default function RepassesPage() {
     const targetStatus = isPagos ? "PAGO" : "PENDENTE";
     const allIds = groups.flatMap((g) =>
       g.entries
-        .filter((e) => e.status === targetStatus && isRepassReleased(e))
+        .filter((e) => e.status === targetStatus && isEntryReleasable(e, g.entries))
         .map((e) => e.id)
     );
     setSelectedEntries(new Set(allIds));
