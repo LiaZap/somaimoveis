@@ -451,7 +451,7 @@ export default function RepassesPage() {
       if (month) params.set("month", month);
       if (activeTab === "pix" || activeTab === "ted" || activeTab === "aguardando") {
         params.set("status", "PENDENTE");
-      } else if (activeTab === "pagos") {
+      } else if (activeTab === "pagos" || activeTab === "confirmados") {
         params.set("status", "PAGO");
       }
       const response = await fetch(`/api/repasses?${params}`);
@@ -508,7 +508,7 @@ export default function RepassesPage() {
   }, []);
 
   const isPendente = activeTab === "pix" || activeTab === "ted";
-  const isPagos = activeTab === "pagos";
+  const isPagos = activeTab === "pagos" || activeTab === "confirmados";
   const isSelectable = isPendente || isPagos;
 
   // Summary
@@ -543,6 +543,15 @@ export default function RepassesPage() {
           e.paymentStatus !== "PAGO"
       );
       if (!hasUnpaidBoleto) return false;
+    }
+    // Aba "Repassados": owners PAGO mas SEM confirmacao do banco
+    // (admin clicou OK no confirm do CNAB mas .RET ainda nao foi importado)
+    if (activeTab === "pagos") {
+      if ((g as any).bankConfirmed === true) return false;
+    }
+    // Aba "Confirmados": apenas owners cujo .RET do Sicredi confirmou sucesso
+    if (activeTab === "confirmados") {
+      if ((g as any).bankConfirmed !== true) return false;
     }
     if (!search) return true;
     const term = search.toLowerCase();
@@ -1184,6 +1193,9 @@ export default function RepassesPage() {
                     <TabsTrigger value="pagos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">
                       Repassados
                     </TabsTrigger>
+                    <TabsTrigger value="confirmados" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">
+                      ✅ Confirmados Banco
+                    </TabsTrigger>
                     <TabsTrigger value="todos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">
                       Todos
                     </TabsTrigger>
@@ -1348,7 +1360,7 @@ export default function RepassesPage() {
                 <p className="text-sm text-muted-foreground">
                   {search
                     ? "Nenhum proprietario encontrado."
-                    : `Nenhum repasse ${activeTab === "pix" ? "PIX a repassar" : activeTab === "ted" ? "TED a repassar" : activeTab === "pagos" ? "repassado" : activeTab === "aguardando" ? "aguardando boleto" : ""} para ${formatMonthLabel(month)}.`}
+                    : `Nenhum repasse ${activeTab === "pix" ? "PIX a repassar" : activeTab === "ted" ? "TED a repassar" : activeTab === "pagos" ? "repassado aguardando confirmação do banco" : activeTab === "confirmados" ? "confirmado pelo banco" : activeTab === "aguardando" ? "aguardando boleto" : ""} para ${formatMonthLabel(month)}.`}
                 </p>
               </div>
             ) : (
