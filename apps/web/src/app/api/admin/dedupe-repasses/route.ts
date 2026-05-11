@@ -27,8 +27,11 @@ export async function POST(request: NextRequest) {
     const dryRun = searchParams.get("dryRun") === "true";
     const monthFilter = searchParams.get("month");
 
+    // Inclui INTERMEDIACAO no dedupe — tambem foi duplicada por sync
+    // (caso Cristiano Kampf: 2 entries INTERMEDIACAO 361.19, uma PAGO e
+    // outra PENDENTE com mesma description).
     const where: Record<string, unknown> = {
-      category: { in: ["REPASSE", "GARANTIA"] },
+      category: { in: ["REPASSE", "GARANTIA", "INTERMEDIACAO"] },
       status: { not: "CANCELADO" },
     };
 

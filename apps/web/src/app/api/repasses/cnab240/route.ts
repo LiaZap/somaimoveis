@@ -105,15 +105,28 @@ export async function POST(request: NextRequest) {
       grouped[oid].refs.push(entry.id);
     }
 
-    // Buscar debitos pendentes para descontar do repasse
+    // Buscar debitos pendentes para descontar do repasse.
+    // FILTRO IMPORTANTE: so debitos do mes ATUAL ou ANTERIORES.
+    // Antes, o CNAB pegava qualquer DEBITO PENDENTE do owner — incluindo
+    // intermediacao de meses futuros (due em junho) ou parcelas a vencer.
+    // Resultado: descontava 2x ou debitava antecipadamente, gerando
+    // valores absurdos (caso Cristiano Kampf: R$ 2,33 em vez de R$ 724).
     const groupedOwnerIds = Object.keys(grouped);
+    const debitWhere: Record<string, unknown> = {
+      type: "DEBITO",
+      status: "PENDENTE",
+      ownerId: { in: groupedOwnerIds },
+    };
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [y, m] = month.split("-").map(Number);
+      debitWhere.OR = [
+        { dueDate: { lt: new Date(y, m, 1) } }, // mes atual ou anteriores
+        { dueDate: null }, // sem data (lancamentos avulsos)
+      ];
+    }
     const debitEntries = groupedOwnerIds.length > 0
       ? await prisma.ownerEntry.findMany({
-          where: {
-            type: "DEBITO",
-            status: "PENDENTE",
-            ownerId: { in: groupedOwnerIds },
-          },
+          where: debitWhere,
           select: { ownerId: true, value: true, id: true },
         })
       : [];
