@@ -159,6 +159,43 @@ function tipoChavePixCnab(tipo: string | undefined): string {
   }
 }
 
+/**
+ * Normaliza a chave PIX conforme o tipo. Sicredi rejeita chaves mal-formatadas:
+ *  - TELEFONE: precisa estar em E.164 (+5551999999999)
+ *  - CPF/CNPJ: somente digitos (sem . / -)
+ *  - EMAIL: lowercase, trim
+ *  - ALEATORIA: trim (UUID-like, deixa como esta)
+ */
+export function normalizePixKey(chave: string | undefined, tipo: string | undefined): string {
+  if (!chave) return "";
+  const t = tipo?.toUpperCase();
+  const raw = chave.trim();
+
+  if (t === "TELEFONE") {
+    // Mantem apenas digitos
+    let digits = raw.replace(/\D/g, "");
+    // Remove zero inicial (formato antigo de DDD: "051...")
+    if (digits.startsWith("0") && digits.length >= 11) digits = digits.slice(1);
+    // Se nao tem 55 na frente e parece BR (10 ou 11 digitos), adiciona
+    if (!digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) {
+      digits = "55" + digits;
+    }
+    // Resultado final: + na frente
+    return digits ? "+" + digits : "";
+  }
+
+  if (t === "CPF" || t === "CNPJ") {
+    return raw.replace(/\D/g, "");
+  }
+
+  if (t === "EMAIL") {
+    return raw.toLowerCase();
+  }
+
+  // ALEATORIA / outros
+  return raw;
+}
+
 // ---- Registros CNAB 240 ----
 
 function headerArquivo(config: CnabConfig): string {
@@ -323,8 +360,10 @@ function segmentoB(
       registro += padStr("", 6); // 227-232: brancos
     } else {
       // PIX Telefone/Email/Aleatória: chave em pos 128-226
+      // Normaliza pra formato aceito pelo Sicredi (E.164 pra telefone, etc)
+      const chaveNorm = normalizePixKey(fav.chavePix, fav.tipoChavePix);
       registro += padStr("", 65); // 063-127: informacao 11
-      registro += padStr(fav.chavePix || "", 99); // 128-226: chave PIX (99 pos)
+      registro += padStr(chaveNorm, 99); // 128-226: chave PIX (99 pos)
       registro += padStr("", 6); // 227-232: brancos
     }
   } else {
