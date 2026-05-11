@@ -783,11 +783,18 @@ export default function RepassesPage() {
       // O proprio CNAB envia o pagamento — assim que o admin confirmar
       // o envio do arquivo pro Sicredi, faz sentido marcar como pago
       // pra nao precisar voltar e marcar manualmente.
-      const entryIdsNoCnab = cnabGroups.flatMap((g) =>
-        g.entries
-          .filter((e) => e.status === "PENDENTE" && isRepassReleased(e))
-          .map((e) => e.id)
-      );
+      //
+      // Filtra APENAS owners cuja forma de pagamento bate com a forma do
+      // CNAB que foi gerado. Antes da correcao, se o admin estivesse na
+      // aba "Todos" ou "Aguardando", o cnabGroups incluia owners de TED
+      // e PIX juntos — e clicar OK marcava os TEDs como pagos tambem.
+      const entryIdsNoCnab = cnabGroups
+        .filter((g) => getOwnerPaymentTypes(g.owner).includes(forma))
+        .flatMap((g) =>
+          g.entries
+            .filter((e) => e.status === "PENDENTE" && isRepassReleased(e))
+            .map((e) => e.id)
+        );
       if (entryIdsNoCnab.length > 0) {
         const confirmou = window.confirm(
           `CNAB gerado. Marcar os ${entryIdsNoCnab.length} repasse(s) incluidos como PAGOS agora?\n\n` +
