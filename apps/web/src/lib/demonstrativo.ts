@@ -383,6 +383,19 @@ export async function buildDemonstrativo(
       return !(cat === "DESCONTO" || cat === "ACORDO" || desc.includes("DESCONTO"));
     });
 
+    // Flag pra evitar duplicacao quando ha mais de um repasse no mesmo
+    // contrato (raro: troca de inquilino no meio do mes). Sem isso,
+    // pendingDescontos e descontosLocatario eram somados N vezes.
+    let descontosJaAdicionados = false;
+
+    // Lookup do contrato pra usar rentalValue como fallback quando
+    // notes.aluguelBruto nao existir. Antes, o fallback era e.value
+    // (que e o LIQUIDO ja calculado) — gerava aluguel menor que o
+    // real + admin fee em cima do valor errado.
+    const contractInfo = contractMap.get(contractId);
+    const contractRentalValue = (contractInfo as any)?.rentalValue ?? 0;
+    const contractAdminPct = (contractInfo as any)?.adminFeePercent ?? null;
+
     for (const rp of pendingRepasses) {
       const { entry: e, noteData, refDate, dateStr } = rp;
       const refDateObj = new Date(refDate);
@@ -390,8 +403,15 @@ export async function buildDemonstrativo(
       const refM = (refDateObj.getMonth() + 11) % 12;
       const monthRef = `${String(refM + 1).padStart(2, "0")}/${refY}`;
 
-      const brutoTotalContrato = noteData?.aluguelBruto || e.value;
-      const adminFeePercent = noteData?.adminFeePercent || 10;
+      // Ordem de prioridade pro bruto total do contrato:
+      // 1. notes.aluguelBruto (fonte da verdade quando billing/generate criou)
+      // 2. Contract.rentalValue (fallback historico — entries antigas sem notes)
+      // 3. e.value (ultima opcao — mas e o LIQUIDO ja calculado, gera erro
+      //    no recalculo de admin fee. So usa se nada mais disponivel.)
+      const brutoTotalContrato =
+        noteData?.aluguelBruto ||
+        (contractRentalValue > 0 ? contractRentalValue : e.value);
+      const adminFeePercent = noteData?.adminFeePercent ?? contractAdminPct ?? 10;
       // Tenta sharePercent das notes; senao, extrai da description "(X%)".
       // Caso historico: repair-coowner-repasses corrigiu o value mas nao
       // persistiu sharePercent nas notes — sem fallback, o demonstrativo
@@ -439,22 +459,27 @@ export async function buildDemonstrativo(
         g.aluguelLiquido += brutoLiquido;
       }
 
-      for (const d of pendingDescontos) {
-        g.movimentos.push({
-          date: d.dateStr,
-          descricao: d.entry.description,
-          entrada: 0,
-          saida: d.entry.value,
-        });
-        g.totalSaidas += d.entry.value;
-      }
+      // Descontos do proprio proprietario e descontos do locatario que
+      // foram repassados — adicionar UMA UNICA VEZ por contrato, mesmo
+      // que haja mais de um pendingRepasse (raro: troca de inquilino).
+      if (!descontosJaAdicionados) {
+        for (const d of pendingDescontos) {
+          g.movimentos.push({
+            date: d.dateStr,
+            descricao: d.entry.description,
+            entrada: 0,
+            saida: d.entry.value,
+          });
+          g.totalSaidas += d.entry.value;
+        }
 
-      for (const l of descontosLocatario) {
-        const valorProprio = Math.round((l.valor || 0) * shareRatio * 100) / 100;
-        if (valorProprio <= 0) continue;
-        const descText = `${l.descricao || "Desconto"} Ref ${monthRef}${shareLabel}`;
-        g.movimentos.push({ date: dateStr, descricao: descText, entrada: 0, saida: valorProprio });
-        g.totalSaidas += valorProprio;
+        for (const l of descontosLocatario) {
+          const valorProprio = Math.round((l.valor || 0) * shareRatio * 100) / 100;
+          if (valorProprio <= 0) continue;
+          const descText = `${l.descricao || "Desconto"} Ref ${monthRef}${shareLabel}`;
+          g.movimentos.push({ date: dateStr, descricao: descText, entrada: 0, saida: valorProprio });
+          g.totalSaidas += valorProprio;
+        }
       }
 
       if (adminFeeRecalc > 0) {
@@ -479,21 +504,28 @@ export async function buildDemonstrativo(
         g.irrf += irrfRecalc;
       }
 
-      for (const l of outrosCreditosLocatario) {
-        const valorProprio = Math.round((l.valor || 0) * shareRatio * 100) / 100;
-        if (valorProprio <= 0) continue;
-        g.movimentos.push({
-          date: dateStr,
-          descricao: l.descricao || "Credito",
-          entrada: 0,
-          saida: valorProprio,
-        });
-        g.totalSaidas += valorProprio;
+      // Outros creditos do locatario (IPTU, condominio, agua, luz que ele
+      // pagou e foram retidos pra cobrir terceiros). Tambem uma vez so.
+      if (!descontosJaAdicionados) {
+        for (const l of outrosCreditosLocatario) {
+          const valorProprio = Math.round((l.valor || 0) * shareRatio * 100) / 100;
+          if (valorProprio <= 0) continue;
+          g.movimentos.push({
+            date: dateStr,
+            descricao: l.descricao || "Credito",
+            entrada: 0,
+            saida: valorProprio,
+          });
+          g.totalSaidas += valorProprio;
+        }
       }
+      descontosJaAdicionados = true;
 
       // Juros/multa por atraso (Lei do Leo: dia <= 10 = imob; dia > 10 = owner; aluguel garantido = imob sempre)
+      // Adicionar apenas uma vez por contrato — descontosJaAdicionados
+      // ja foi setado true acima, entao aqui usamos a mesma protecao.
       const fi = fineInterestByContract.get(contractId);
-      if (fi) {
+      if (fi && (rp === pendingRepasses[0])) {
         const dataPagto = fi.paidAt
           ? new Date(fi.paidAt).toLocaleDateString("pt-BR", { timeZone: "UTC" })
           : dateStr;
