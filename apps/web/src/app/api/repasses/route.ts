@@ -181,16 +181,17 @@ export async function GET(request: NextRequest) {
     status: "PENDENTE",
     ownerId: { in: ownerIds },
   };
-  // Filtro de mes: lancamento vinculado ao mes — debito do mes 04 nao
-  // aparece no mes 05. Se o repasse de 04 nao foi fechado, eventual saldo
-  // negativo cai como SALDO_NEGATIVO no mes seguinte (carry-forward
-  // explicito via PATCH /api/repasses linhas 297+).
+  // Filtro de mes: mostra debitos do mes atual + anteriores que ainda
+  // estao PENDENTES (carry-forward natural). Quando o admin marca o
+  // repasse como PAGO, os debitos do mes sao auto-marcados como PAGO
+  // (lei do Leo) — entao nao acumulam indefinidamente.
+  // Tambem inclui debitos sem dueDate (lancamentos avulsos).
   if (month && /^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split("-").map(Number);
-    debitWhere.dueDate = {
-      gte: new Date(y, m - 1, 1),
-      lt: new Date(y, m, 1),
-    };
+    debitWhere.OR = [
+      { dueDate: { lt: new Date(y, m, 1) } }, // mes atual ou anteriores
+      { dueDate: null }, // sem data
+    ];
   }
   const debitEntries = await prisma.ownerEntry.findMany({
     where: debitWhere,
