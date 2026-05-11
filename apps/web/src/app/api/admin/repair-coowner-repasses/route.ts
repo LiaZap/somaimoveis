@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
       valueAtual: number;
       valueCorreto: number;
       diff: number;
+      needsNotesUpdate: boolean;
     }[] = [];
 
     for (const e of entries) {
@@ -77,13 +78,16 @@ export async function POST(request: NextRequest) {
       }
       let aluguelBruto = 0;
       let adminFeeValue = 0;
+      let notesObj: Record<string, unknown> = {};
+      let notesHasShare = false;
       if (e.notes) {
         try {
-          const n = JSON.parse(e.notes);
-          aluguelBruto = typeof n.aluguelBruto === "number" ? n.aluguelBruto : 0;
-          adminFeeValue = typeof n.adminFeeValue === "number" ? n.adminFeeValue : 0;
-          if (sharePct == null && typeof n.sharePercent === "number" && n.sharePercent < 100) {
-            sharePct = n.sharePercent;
+          notesObj = JSON.parse(e.notes);
+          aluguelBruto = typeof notesObj.aluguelBruto === "number" ? notesObj.aluguelBruto : 0;
+          adminFeeValue = typeof notesObj.adminFeeValue === "number" ? notesObj.adminFeeValue : 0;
+          if (typeof notesObj.sharePercent === "number" && notesObj.sharePercent > 0 && notesObj.sharePercent < 100) {
+            notesHasShare = true;
+            if (sharePct == null) sharePct = notesObj.sharePercent;
           }
         } catch {}
       }
@@ -92,7 +96,10 @@ export async function POST(request: NextRequest) {
       if (aluguelBruto <= 0) continue; // sem dados pra calcular
 
       const valueCorreto = Math.round((aluguelBruto - adminFeeValue) * sharePct / 100 * 100) / 100;
-      if (Math.abs(e.value - valueCorreto) <= 0.01) continue; // ja certo
+      const valueOk = Math.abs(e.value - valueCorreto) <= 0.01;
+      // Persist sharePercent nas notes mesmo quando o value ja esta correto.
+      // O demonstrativo le notes.sharePercent pra multiplicar pelo aluguelBruto.
+      if (valueOk && notesHasShare) continue;
 
       fixes.push({
         entryId: e.id,
@@ -103,14 +110,27 @@ export async function POST(request: NextRequest) {
         valueAtual: e.value,
         valueCorreto,
         diff: Math.round((e.value - valueCorreto) * 100) / 100,
+        needsNotesUpdate: !notesHasShare,
       });
+
+      // Salva o estado das notes pra atualizacao
+      (notesObj as any).__patchedSharePercent = sharePct;
+      (e as any).__notesObj = notesObj;
     }
 
     if (!dryRun) {
       for (const f of fixes) {
+        const e = entries.find((x) => x.id === f.entryId);
+        const updateData: Record<string, unknown> = { value: f.valueCorreto };
+        if (f.needsNotesUpdate && e) {
+          const notesObj = (e as any).__notesObj as Record<string, unknown>;
+          notesObj.sharePercent = f.sharePercent;
+          delete (notesObj as any).__patchedSharePercent;
+          updateData.notes = JSON.stringify(notesObj);
+        }
         await prisma.ownerEntry.update({
           where: { id: f.entryId },
-          data: { value: f.valueCorreto },
+          data: updateData,
         });
       }
     }

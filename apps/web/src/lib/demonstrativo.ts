@@ -392,7 +392,21 @@ export async function buildDemonstrativo(
 
       const brutoTotalContrato = noteData?.aluguelBruto || e.value;
       const adminFeePercent = noteData?.adminFeePercent || 10;
-      const sharePercent = noteData?.sharePercent || 100;
+      // Tenta sharePercent das notes; senao, extrai da description "(X%)".
+      // Caso historico: repair-coowner-repasses corrigiu o value mas nao
+      // persistiu sharePercent nas notes — sem fallback, o demonstrativo
+      // multiplicava por 100% e mostrava o valor cheio do contrato.
+      let sharePercent = noteData?.sharePercent;
+      if (typeof sharePercent !== "number" || sharePercent <= 0) {
+        const descMatch = e.description?.match(/\(([\d.,]+)%\)/);
+        if (descMatch) {
+          const pct = parseFloat(descMatch[1].replace(",", "."));
+          if (Number.isFinite(pct) && pct > 0 && pct < 100) {
+            sharePercent = pct;
+          }
+        }
+      }
+      if (typeof sharePercent !== "number" || sharePercent <= 0) sharePercent = 100;
       const shareRatio = sharePercent / 100;
       const isPartial = sharePercent < 100;
       const shareLabel = isPartial ? ` (${sharePercent}%)` : "";
