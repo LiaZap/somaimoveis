@@ -265,12 +265,25 @@ export async function GET(request: NextRequest) {
       const repasseEntry = g.entries.find(e => ["REPASSE", "GARANTIA"].includes(e.category));
       const pctMatch = repasseEntry?.description.match(/\((\d+(?:[.,]\d+)?)%\)/);
       const sharePercent = pctMatch ? parseFloat(pctMatch[1].replace(",", ".")) : null;
+      // Confirmacao do banco: extrai bankConfirmed do notes do REPASSE
+      // pra distinguir "PAGO efetivado pelo Sicredi" de "PAGO marcado manual".
+      let bankConfirmed = false;
+      let bankConfirmedAt: string | null = null;
+      if (repasseEntry?.notes) {
+        try {
+          const n = JSON.parse(repasseEntry.notes);
+          bankConfirmed = n.bankConfirmed === true;
+          bankConfirmedAt = n.bankConfirmedAt || null;
+        } catch { /* ignore */ }
+      }
       return {
         ...g,
         totalPendente: Math.round(g.totalPendente * 100) / 100,
         totalPago: Math.round(g.totalPago * 100) / 100,
         totalDebitos: Math.round(g.totalDebitos * 100) / 100,
         totalLiquido: Math.round((g.totalPendente + g.totalPago - g.totalDebitos) * 100) / 100,
+        bankConfirmed,
+        bankConfirmedAt,
         isCoOwner: sharePercent !== null && sharePercent < 100,
         sharePercent,
       };

@@ -65,6 +65,9 @@ export async function POST(request: NextRequest) {
     // IDs de entries que estavam marcadas PAGO mas o retorno indicou ERRO.
     // Voltam pra PENDENTE pra entrar na proxima geracao de CNAB.
     const entryIdsToRevert: string[] = [];
+    // Entries com sucesso confirmado pelo banco — marcadas em notes
+    // pra distinguir de PAGO "manual" (marcado via confirm do CNAB).
+    const entryIdsToConfirm: Array<{ id: string; notes: string | null; ocorrencias: string }> = [];
 
     for (const pgto of retorno.pagamentos) {
       const docEmpresa = pgto.documentoEmpresa.trim();
@@ -107,6 +110,22 @@ export async function POST(request: NextRequest) {
         }
         resultado.marcadoPago = true;
         resultado.entriesMarcadas = pendentes.length;
+      }
+
+      // Confirmacao pelo Sicredi: marca em notes que o pagamento foi
+      // efetivado pelo banco. Permite distinguir "PAGO confirmado pelo
+      // banco" de "PAGO marcado manualmente pelo admin via confirm do CNAB"
+      // mesmo nos casos em que ja estava PAGO.
+      if (pgto.sucesso && matchedEntries.length > 0) {
+        const ocorrencias = pgto.ocorrencias.map(o => o.codigo).join(",");
+        for (const entry of matchedEntries) {
+          // skip se ja confirmado (evita re-processamento desnecessario)
+          try {
+            const n = JSON.parse(entry.notes || "{}");
+            if (n.bankConfirmed === true) continue;
+          } catch { /* re-confirma */ }
+          entryIdsToConfirm.push({ id: entry.id, notes: entry.notes, ocorrencias });
+        }
       }
 
       // Se ERRO no retorno, reverter PAGO -> PENDENTE pra repassar.
@@ -206,6 +225,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Marca bankConfirmed=true em notes das entries que tiveram sucesso
+    // no retorno. Distingue "PAGO confirmado pelo banco" de "PAGO marcado
+    // manualmente pelo admin via confirm do CNAB".
+    let totalConfirmados = 0;
+    if (entryIdsToConfirm.length > 0) {
+      const confirmedAt = new Date().toISOString();
+      for (const item of entryIdsToConfirm) {
+        let notesObj: Record<string, unknown> = {};
+        try { notesObj = JSON.parse(item.notes || "{}"); } catch { /* ignore */ }
+        notesObj.bankConfirmed = true;
+        notesObj.bankConfirmedAt = confirmedAt;
+        notesObj.bankReturnCodes = item.ocorrencias;
+        await prisma.ownerEntry.update({
+          where: { id: item.id },
+          data: { notes: JSON.stringify(notesObj) },
+        });
+        totalConfirmados++;
+      }
+    }
+
     return NextResponse.json({
       arquivo: {
         banco: retorno.banco,
@@ -229,6 +268,7 @@ export async function POST(request: NextRequest) {
         revertidos: totalRevertidos,
         entriesRevertidas: resultados.reduce((s, r) => s + (r.entriesRevertidas || 0), 0),
         debitosRevertidos: totalDebitosRevertidos,
+        confirmadosBanco: totalConfirmados,
       },
       resultados,
     });
