@@ -174,24 +174,39 @@ export async function GET(request: NextRequest) {
     console.error("[Repasses] Erro ao buscar status do Payment:", err);
   }
 
-  // Buscar debitos PENDENTES dos proprietarios para descontar do repasse
+  // Buscar debitos dos proprietarios para descontar do repasse.
+  // O filtro de status segue o status da query — na aba "Repassados"
+  // (status=PAGO) mostra debitos PAGO do mesmo mes (foram pagos junto
+  // com o repasse, lei do Leo). Sem isso, o admin via "0 debitos" na
+  // aba pagos e ficava confuso pra conferir.
   const ownerIds = [...new Set(entries.map((e) => e.ownerId))];
   const debitWhere: Record<string, unknown> = {
     type: "DEBITO",
-    status: "PENDENTE",
     ownerId: { in: ownerIds },
   };
-  // Filtro de mes: mostra debitos do mes atual + anteriores que ainda
-  // estao PENDENTES (carry-forward natural). Quando o admin marca o
-  // repasse como PAGO, os debitos do mes sao auto-marcados como PAGO
-  // (lei do Leo) — entao nao acumulam indefinidamente.
-  // Tambem inclui debitos sem dueDate (lancamentos avulsos).
-  if (month && /^\d{4}-\d{2}$/.test(month)) {
-    const [y, m] = month.split("-").map(Number);
-    debitWhere.OR = [
-      { dueDate: { lt: new Date(y, m, 1) } }, // mes atual ou anteriores
-      { dueDate: null }, // sem data
-    ];
+
+  if (status === "PAGO") {
+    debitWhere.status = "PAGO";
+    // Mostra debitos PAGO do mes selecionado (foram pagos junto com o repasse)
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [y, m] = month.split("-").map(Number);
+      debitWhere.dueDate = {
+        gte: new Date(y, m - 1, 1),
+        lt: new Date(y, m, 1),
+      };
+    }
+  } else {
+    // Default (PENDENTE ou all): mostra debitos do mes atual + anteriores
+    // que ainda estao PENDENTES (carry-forward natural). Tambem inclui
+    // debitos sem dueDate (lancamentos avulsos).
+    debitWhere.status = "PENDENTE";
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [y, m] = month.split("-").map(Number);
+      debitWhere.OR = [
+        { dueDate: { lt: new Date(y, m, 1) } }, // mes atual ou anteriores
+        { dueDate: null }, // sem data
+      ];
+    }
   }
   const debitEntries = await prisma.ownerEntry.findMany({
     where: debitWhere,
