@@ -428,11 +428,31 @@ export async function buildDemonstrativo(
     });
 
     const ownerDescontoValues = pendingDescontos.map((d) => d.entry.value);
+    // Dedupe: descontosLocatario vs pendingDescontos.
+    // pendingDescontos.value e PROPORCIONAL (ex: R$ 250 = R$ 1.000 * 25%).
+    // descontosLocatarioAll[i].valor e o valor CHEIO do contrato.
+    // Pra comparar, descobrimos o sharePercent do REPASSE principal pra
+    // aplicar no `l.valor`. Caso CTR-214: 4 coproprietarios 25% cada
+    // tinham R$ 250 (DESCONTO proporcional) + R$ 250 (descontoLocatario
+    // R$ 1.000 * 25%) — duplicacao silenciosa porque o filter comparava
+    // 250 vs 1000 e nao batia.
+    const firstRepasseNotes = pendingRepasses[0]?.noteData;
+    const firstRepasseDesc = pendingRepasses[0]?.entry?.description || "";
+    let dedupeShareRatio = 1;
+    if (typeof firstRepasseNotes?.sharePercent === "number" && firstRepasseNotes.sharePercent > 0) {
+      dedupeShareRatio = firstRepasseNotes.sharePercent / 100;
+    } else {
+      const m = firstRepasseDesc.match(/\(([\d.,]+)%\)/);
+      if (m) {
+        const pct = parseFloat(m[1].replace(",", "."));
+        if (Number.isFinite(pct) && pct > 0 && pct < 100) dedupeShareRatio = pct / 100;
+      }
+    }
     const usedOwnerIdx = new Set<number>();
     const descontosLocatario = descontosLocatarioAll.filter((l) => {
-      const v = l.valor || 0;
+      const valorProporcional = (l.valor || 0) * dedupeShareRatio;
       const idx = ownerDescontoValues.findIndex(
-        (ov, i) => !usedOwnerIdx.has(i) && Math.abs(ov - v) < 0.01
+        (ov, i) => !usedOwnerIdx.has(i) && Math.abs(ov - valorProporcional) < 0.01
       );
       if (idx >= 0) { usedOwnerIdx.add(idx); return false; }
       return true;
