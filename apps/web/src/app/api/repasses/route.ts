@@ -201,14 +201,20 @@ export async function GET(request: NextRequest) {
   };
 
   if (status === "PAGO") {
-    debitWhere.status = "PAGO";
-    // Mostra debitos PAGO do mes selecionado (foram pagos junto com o repasse)
+    // Aba "Nao Confirmados" / "Confirmados Banco": mostra TODOS os
+    // debitos do owner ate o final do mes selecionado (PAGO ja descontados +
+    // PENDENTE que serao descontados no proximo repasse). Sem isso, o
+    // admin nao via os REPAROs do Lucio que ainda nao tinham sido cobrados.
+    debitWhere.status = { in: ["PENDENTE", "PAGO"] };
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [y, m] = month.split("-").map(Number);
-      debitWhere.dueDate = {
-        gte: new Date(y, m - 1, 1),
-        lt: new Date(y, m, 1),
-      };
+      // Inclui debitos com dueDate ate o final do mes (PAGO do mes + PENDENTE
+      // do mes ou anteriores + sem dueDate). m e 1-indexed, então new Date(y, m, 1)
+      // ja retorna o primeiro dia do mes seguinte.
+      debitWhere.OR = [
+        { dueDate: { lt: new Date(y, m, 1) } },
+        { dueDate: null },
+      ];
     }
   } else if (status === "PENDENTE") {
     // Aba PIX/TED: debitos PENDENTES a descontar do proximo repasse.
