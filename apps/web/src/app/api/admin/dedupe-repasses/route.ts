@@ -59,14 +59,16 @@ export async function POST(request: NextRequest) {
       orderBy: { paidAt: "asc" },
     });
 
-    // Agrupa por chave: ownerId + contractId + description + dueDate + value
+    // Agrupa por chave: ownerId + contractId + description + value
+    // (sem dueDate na chave — captura o caso comum onde sync gerou
+    // duplicata com dueDate ligeiramente diferente, ex: 05/05 vs 06/04
+    // para o mesmo "Repasse aluguel 04/2026". Caso Katiane Katzer.)
     const groups: Record<string, typeof entries> = {};
     for (const e of entries) {
       const key = [
         e.ownerId,
         e.contractId || "noContract",
         e.description,
-        e.dueDate ? e.dueDate.toISOString().slice(0, 10) : "noDue",
         e.value.toFixed(2),
       ].join("|");
       if (!groups[key]) groups[key] = [];
