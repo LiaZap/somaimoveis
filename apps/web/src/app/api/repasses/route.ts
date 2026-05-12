@@ -300,16 +300,32 @@ export async function GET(request: NextRequest) {
       const repasseEntry = g.entries.find(e => ["REPASSE", "GARANTIA"].includes(e.category));
       const pctMatch = repasseEntry?.description.match(/\((\d+(?:[.,]\d+)?)%\)/);
       const sharePercent = pctMatch ? parseFloat(pctMatch[1].replace(",", ".")) : null;
-      // Confirmacao do banco: extrai bankConfirmed do notes do REPASSE
-      // pra distinguir "PAGO efetivado pelo Sicredi" de "PAGO marcado manual".
+      // Confirmacao do banco: prefere bankConfirmed do REPASSE.
+      // Se NAO ha REPASSE no mes (ex: owner so tem IPTU/credito avulso),
+      // verifica se TODAS as entries PAGO do owner tem bankConfirmed=true.
       let bankConfirmed = false;
       let bankConfirmedAt: string | null = null;
-      if (repasseEntry?.notes) {
+      const checkConfirmed = (notes: string | null) => {
+        if (!notes) return { confirmed: false, at: null as string | null };
         try {
-          const n = JSON.parse(repasseEntry.notes);
-          bankConfirmed = n.bankConfirmed === true;
-          bankConfirmedAt = n.bankConfirmedAt || null;
-        } catch { /* ignore */ }
+          const n = JSON.parse(notes);
+          return { confirmed: n.bankConfirmed === true, at: n.bankConfirmedAt || null };
+        } catch { return { confirmed: false, at: null }; }
+      };
+      if (repasseEntry) {
+        const r = checkConfirmed(repasseEntry.notes);
+        bankConfirmed = r.confirmed;
+        bankConfirmedAt = r.at;
+      } else {
+        const entriesPagas = g.entries.filter((e: any) => e.status === "PAGO");
+        if (entriesPagas.length > 0) {
+          const todasConfirmadas = entriesPagas.every((e: any) => checkConfirmed(e.notes).confirmed);
+          if (todasConfirmadas) {
+            bankConfirmed = true;
+            const first = entriesPagas.map((e: any) => checkConfirmed(e.notes).at).find(Boolean);
+            bankConfirmedAt = first || null;
+          }
+        }
       }
       return {
         ...g,
