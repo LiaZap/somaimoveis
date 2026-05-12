@@ -230,8 +230,15 @@ export async function GET(request: NextRequest) {
     debitWhere.status = { in: ["PENDENTE", "PAGO"] };
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [y, m] = month.split("-").map(Number);
+      // monthEnd = primeiro dia do mes SEGUINTE.
+      // month "2026-05" → m=5, JS Date espera 0-indexed,
+      // entao new Date(2026, 5, 1) = junho 1 (correto).
+      // BUG anterior: usava new Date(y, m+1, 1) = julho 1 (off-by-one),
+      // o que incluia debitos de junho indevidamente no totalDebitos
+      // de maio (caso Marlene: 3 reparos parcelados — 1 de abril,
+      // 1 de maio e 1 de junho eram todos somados).
       debitWhere.OR = [
-        { dueDate: { lt: new Date(y, m + 1, 1) } }, // mes atual e anteriores
+        { dueDate: { lt: new Date(y, m, 1) } }, // mes atual e anteriores
         { dueDate: null },
       ];
     }
