@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyPortalToken } from "@/lib/portal-auth";
 
+interface EntryDetail {
+  category: string;
+  description: string;
+  value: number;
+  status: string;
+  type: "CREDITO" | "DEBITO";
+}
+
 interface MonthGroup {
   month: number;
   year: number;
@@ -19,12 +27,30 @@ interface MonthGroup {
     description: string | null;
     property: string;
     tenant: string;
+    // Breakdown detalhado das entries do owner (creditos e debitos)
+    breakdown: {
+      aluguelBruto: number;
+      adminFee: number;
+      adminFeePercent: number;
+      iptu: number;
+      condominio: number;
+      intermediacao: number;
+      irrf: number;
+      outrosDebitos: number;
+      outrosCreditos: number;
+      repasseLiquido: number;
+      entries: EntryDetail[];
+    };
   }[];
   totals: {
     totalValue: number;
     totalPaid: number;
     totalOwner: number;
     totalAdmin: number;
+    totalIptu: number;
+    totalCondominio: number;
+    totalIntermediacao: number;
+    totalOutrosDebitos: number;
   };
 }
 
@@ -88,6 +114,28 @@ export async function GET(request: NextRequest) {
       orderBy: { dueDate: "desc" },
     });
 
+    // Buscar OwnerEntries do owner para enriquecer com breakdown (IPTU,
+    // condominio, intermediacao, etc descontados/creditados no mes).
+    const yearFilter = year ? { gte: new Date(parseInt(year, 10), 0, 1), lt: new Date(parseInt(year, 10) + 1, 0, 1) } : undefined;
+    const ownerEntries = await prisma.ownerEntry.findMany({
+      where: {
+        ownerId,
+        status: { in: ["PAGO", "PENDENTE"] },
+        ...(yearFilter ? { dueDate: yearFilter } : {}),
+      },
+      select: {
+        id: true,
+        type: true,
+        category: true,
+        description: true,
+        value: true,
+        status: true,
+        dueDate: true,
+        paidAt: true,
+        contractId: true,
+      },
+    });
+
     // Agrupar por mes
     const monthsMap = new Map<string, MonthGroup>();
 
@@ -120,6 +168,10 @@ export async function GET(request: NextRequest) {
             totalPaid: 0,
             totalOwner: 0,
             totalAdmin: 0,
+            totalIptu: 0,
+            totalCondominio: 0,
+            totalIntermediacao: 0,
+            totalOutrosDebitos: 0,
           },
         });
       }
@@ -145,6 +197,57 @@ export async function GET(request: NextRequest) {
       const splitAdmin = Math.round(splitAdminTotal * shareFactor * 100) / 100;
       const splitOwner = Math.round(splitOwnerTotal * shareFactor * 100) / 100;
 
+      // Breakdown detalhado: OwnerEntries do mesmo contrato + mes referencia.
+      // Considera entries com dueDate no mes m+1 (= mes de processamento do
+      // repasse no sistema, geralmente 1 mes apos competencia do aluguel).
+      const refMonth = m + 1; // mes de competencia (0-indexed +1)
+      const refYear = y;
+      // O processamento do repasse acontece no MES SEGUINTE a competencia
+      // (aluguel de abril → entries com dueDate em maio). Pega entries com
+      // dueDate +1 mes da competencia.
+      const procMonth = refMonth === 12 ? 1 : refMonth + 1;
+      const procYear = refMonth === 12 ? refYear + 1 : refYear;
+      const procStart = new Date(procYear, procMonth - 1, 1);
+      const procEnd = new Date(procYear, procMonth, 1);
+
+      const ctrEntries = ownerEntries.filter(
+        (e) =>
+          e.contractId === payment.contractId &&
+          e.dueDate &&
+          e.dueDate >= procStart &&
+          e.dueDate < procEnd,
+      );
+
+      let iptuTotal = 0, condTotal = 0, interTotal = 0, irrfTotal = 0;
+      let outrosDeb = 0, outrosCred = 0;
+      const entriesDetalhe: EntryDetail[] = [];
+
+      for (const e of ctrEntries) {
+        const entryShare = e.value * shareFactor;
+        entriesDetalhe.push({
+          category: e.category,
+          description: e.description || "",
+          value: Math.round(entryShare * 100) / 100,
+          status: e.status,
+          type: e.type as "CREDITO" | "DEBITO",
+        });
+        if (e.type === "DEBITO") {
+          if (e.category === "INTERMEDIACAO") interTotal += entryShare;
+          else if (e.category === "IPTU") iptuTotal += entryShare;
+          else if (e.category === "CONDOMINIO") condTotal += entryShare;
+          else if (e.category === "IRRF") irrfTotal += entryShare;
+          else outrosDeb += entryShare;
+        } else if (e.type === "CREDITO" && e.category !== "REPASSE") {
+          // IPTU/condominio creditados (devolucao) ou outros creditos avulsos
+          if (e.category === "IPTU") iptuTotal -= entryShare; // credito IPTU = devolucao = reduz desconto
+          else if (e.category === "CONDOMINIO") condTotal -= entryShare;
+          else outrosCred += entryShare;
+        }
+      }
+
+      const aluguelBruto = payment.value * shareFactor;
+      const adminFeeShare = Math.round(splitAdminTotal * shareFactor * 100) / 100;
+
       group.payments.push({
         id: payment.id,
         code: payment.code,
@@ -158,6 +261,19 @@ export async function GET(request: NextRequest) {
         description: payment.description,
         property: payment.contract.property?.title || "N/A",
         tenant: payment.tenant?.name || "N/A",
+        breakdown: {
+          aluguelBruto: Math.round(aluguelBruto * 100) / 100,
+          adminFee: adminFeeShare,
+          adminFeePercent,
+          iptu: Math.round(iptuTotal * 100) / 100,
+          condominio: Math.round(condTotal * 100) / 100,
+          intermediacao: Math.round(interTotal * 100) / 100,
+          irrf: Math.round(irrfTotal * 100) / 100,
+          outrosDebitos: Math.round(outrosDeb * 100) / 100,
+          outrosCreditos: Math.round(outrosCred * 100) / 100,
+          repasseLiquido: Math.round((splitOwner - iptuTotal - condTotal - interTotal - irrfTotal - outrosDeb + outrosCred) * 100) / 100,
+          entries: entriesDetalhe,
+        },
       });
 
       // Totais respeitam o share% do owner atual (co-proprietario ve apenas
@@ -167,7 +283,23 @@ export async function GET(request: NextRequest) {
         group.totals.totalPaid += paidValue * shareFactor;
         group.totals.totalOwner += splitOwner;
         group.totals.totalAdmin += splitAdmin;
+        group.totals.totalIptu += iptuTotal;
+        group.totals.totalCondominio += condTotal;
+        group.totals.totalIntermediacao += interTotal;
+        group.totals.totalOutrosDebitos += outrosDeb;
       }
+    }
+
+    // Arredonda totais
+    for (const m of monthsMap.values()) {
+      m.totals.totalValue = Math.round(m.totals.totalValue * 100) / 100;
+      m.totals.totalPaid = Math.round(m.totals.totalPaid * 100) / 100;
+      m.totals.totalOwner = Math.round(m.totals.totalOwner * 100) / 100;
+      m.totals.totalAdmin = Math.round(m.totals.totalAdmin * 100) / 100;
+      m.totals.totalIptu = Math.round(m.totals.totalIptu * 100) / 100;
+      m.totals.totalCondominio = Math.round(m.totals.totalCondominio * 100) / 100;
+      m.totals.totalIntermediacao = Math.round(m.totals.totalIntermediacao * 100) / 100;
+      m.totals.totalOutrosDebitos = Math.round(m.totals.totalOutrosDebitos * 100) / 100;
     }
 
     // Ordenar meses por data (mais recente primeiro)

@@ -13,19 +13,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   Receipt,
   Calendar,
-  DollarSign,
   TrendingUp,
-  Minus,
   ChevronDown,
   ChevronUp,
   Printer,
@@ -33,6 +23,28 @@ import {
   Clock,
   AlertTriangle,
 } from "lucide-react";
+
+interface EntryDetail {
+  category: string;
+  description: string;
+  value: number;
+  status: string;
+  type: "CREDITO" | "DEBITO";
+}
+
+interface PaymentBreakdown {
+  aluguelBruto: number;
+  adminFee: number;
+  adminFeePercent: number;
+  iptu: number;
+  condominio: number;
+  intermediacao: number;
+  irrf: number;
+  outrosDebitos: number;
+  outrosCreditos: number;
+  repasseLiquido: number;
+  entries: EntryDetail[];
+}
 
 interface MonthPayment {
   id: string;
@@ -47,6 +59,7 @@ interface MonthPayment {
   description: string | null;
   property: string;
   tenant: string;
+  breakdown?: PaymentBreakdown;
 }
 
 interface MonthGroup {
@@ -59,6 +72,10 @@ interface MonthGroup {
     totalPaid: number;
     totalOwner: number;
     totalAdmin: number;
+    totalIptu?: number;
+    totalCondominio?: number;
+    totalIntermediacao?: number;
+    totalOutrosDebitos?: number;
   };
 }
 
@@ -339,80 +356,170 @@ export default function PortalStatementPage() {
 
                   {/* Expanded Payment Details */}
                   {isExpanded && (
-                    <div className="border-t overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="hover:bg-transparent">
-                            <TableHead className="text-xs">Código</TableHead>
-                            <TableHead className="text-xs">Imóvel</TableHead>
-                            <TableHead className="text-xs">
-                              Locatario
-                            </TableHead>
-                            <TableHead className="text-xs">
-                              Vencimento
-                            </TableHead>
-                            <TableHead className="text-xs text-right">
-                              Valor
-                            </TableHead>
-                            <TableHead className="text-xs text-right">
-                              Sua Parte
-                            </TableHead>
-                            <TableHead className="text-xs text-right">
-                              Taxa Admin.
-                            </TableHead>
-                            <TableHead className="text-xs">Status</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {month.payments.map((payment) => {
-                            const status = statusConfig[payment.status] || {
-                              label: payment.status,
-                              className: "bg-muted text-muted-foreground",
-                              icon: Clock,
-                            };
-                            const StatusIcon = status.icon;
+                    <div className="border-t bg-muted/10 p-4 space-y-4">
+                      {month.payments.map((payment) => {
+                        const status = statusConfig[payment.status] || {
+                          label: payment.status,
+                          className: "bg-muted text-muted-foreground",
+                          icon: Clock,
+                        };
+                        const StatusIcon = status.icon;
+                        const bd = payment.breakdown;
 
-                            return (
-                              <TableRow key={payment.id}>
-                                <TableCell className="font-mono text-xs">
-                                  {payment.code}
-                                </TableCell>
-                                <TableCell className="text-xs font-medium">
-                                  {payment.property}
-                                </TableCell>
-                                <TableCell className="text-xs text-muted-foreground">
-                                  {payment.tenant}
-                                </TableCell>
-                                <TableCell className="text-xs">
-                                  {formatDate(payment.dueDate)}
-                                </TableCell>
-                                <TableCell className="text-xs font-semibold text-right">
-                                  {formatCurrency(payment.value)}
-                                </TableCell>
-                                <TableCell className="text-xs font-semibold text-right text-emerald-700">
-                                  {payment.splitOwnerValue != null
-                                    ? formatCurrency(payment.splitOwnerValue)
-                                    : "-"}
-                                </TableCell>
-                                <TableCell className="text-xs text-right text-muted-foreground">
-                                  {payment.splitAdminValue != null
-                                    ? formatCurrency(payment.splitAdminValue)
-                                    : "-"}
-                                </TableCell>
-                                <TableCell>
-                                  <Badge
-                                    variant="outline"
-                                    className={`text-xs border gap-1 ${status.className}`}
-                                  >
-                                    <StatusIcon className="h-3 w-3" />
-                                    {status.label}
-                                  </Badge>
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
+                        return (
+                          <Card key={payment.id} className="border shadow-none">
+                            <CardContent className="p-4 space-y-3">
+                              {/* Cabecalho do pagamento */}
+                              <div className="flex flex-wrap items-start justify-between gap-2 pb-2 border-b">
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-xs font-semibold text-primary">{payment.code}</span>
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[10px] border gap-1 ${status.className}`}
+                                    >
+                                      <StatusIcon className="h-3 w-3" />
+                                      {status.label}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-sm font-medium">{payment.property}</p>
+                                  <p className="text-xs text-muted-foreground">Locatário: {payment.tenant}</p>
+                                </div>
+                                <div className="text-right space-y-0.5">
+                                  <p className="text-[10px] text-muted-foreground uppercase">Vencimento</p>
+                                  <p className="text-xs font-medium">{formatDate(payment.dueDate)}</p>
+                                  {payment.paidAt && (
+                                    <>
+                                      <p className="text-[10px] text-muted-foreground uppercase mt-1">Pago em</p>
+                                      <p className="text-xs font-medium text-emerald-700">{formatDate(payment.paidAt)}</p>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Breakdown detalhado */}
+                              {bd ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                  {/* Coluna esquerda — Créditos */}
+                                  <div className="space-y-1.5">
+                                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Créditos</p>
+                                    <div className="flex justify-between">
+                                      <span>Aluguel bruto</span>
+                                      <span className="font-medium">{formatCurrency(bd.aluguelBruto)}</span>
+                                    </div>
+                                    {bd.outrosCreditos > 0 && (
+                                      <div className="flex justify-between text-emerald-700">
+                                        <span>Outros créditos</span>
+                                        <span className="font-medium">+ {formatCurrency(bd.outrosCreditos)}</span>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Coluna direita — Débitos */}
+                                  <div className="space-y-1.5">
+                                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Descontos</p>
+                                    <div className="flex justify-between text-rose-600">
+                                      <span>Taxa de administração ({bd.adminFeePercent}%)</span>
+                                      <span className="font-medium">- {formatCurrency(bd.adminFee)}</span>
+                                    </div>
+                                    {bd.iptu !== 0 && (
+                                      <div className="flex justify-between text-rose-600">
+                                        <span>IPTU</span>
+                                        <span className="font-medium">{bd.iptu > 0 ? "- " : "+ "}{formatCurrency(Math.abs(bd.iptu))}</span>
+                                      </div>
+                                    )}
+                                    {bd.condominio !== 0 && (
+                                      <div className="flex justify-between text-rose-600">
+                                        <span>Condomínio / Fundo reserva</span>
+                                        <span className="font-medium">{bd.condominio > 0 ? "- " : "+ "}{formatCurrency(Math.abs(bd.condominio))}</span>
+                                      </div>
+                                    )}
+                                    {bd.intermediacao > 0 && (
+                                      <div className="flex justify-between text-rose-600">
+                                        <span>Intermediação</span>
+                                        <span className="font-medium">- {formatCurrency(bd.intermediacao)}</span>
+                                      </div>
+                                    )}
+                                    {bd.irrf > 0 && (
+                                      <div className="flex justify-between text-rose-600">
+                                        <span>IRRF</span>
+                                        <span className="font-medium">- {formatCurrency(bd.irrf)}</span>
+                                      </div>
+                                    )}
+                                    {bd.outrosDebitos > 0 && (
+                                      <div className="flex justify-between text-rose-600">
+                                        <span>Outros descontos</span>
+                                        <span className="font-medium">- {formatCurrency(bd.outrosDebitos)}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-xs text-muted-foreground italic">
+                                  Sem detalhamento disponível para este pagamento.
+                                </div>
+                              )}
+
+                              {/* Linha de lançamentos individuais */}
+                              {bd && bd.entries && bd.entries.length > 0 && (
+                                <details className="text-xs">
+                                  <summary className="cursor-pointer text-[10px] text-muted-foreground uppercase font-semibold hover:text-foreground">
+                                    Ver {bd.entries.length} lançamento(s) detalhado(s)
+                                  </summary>
+                                  <div className="mt-2 space-y-1 pl-2 border-l-2 border-muted">
+                                    {bd.entries.map((e, idx) => (
+                                      <div key={idx} className="flex items-start justify-between gap-2 py-1">
+                                        <div className="flex-1 min-w-0">
+                                          <span className="text-[10px] uppercase font-medium text-muted-foreground">{e.category}</span>
+                                          <p className="truncate">{e.description}</p>
+                                        </div>
+                                        <span className={`font-medium whitespace-nowrap ${e.type === 'DEBITO' ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                          {e.type === 'DEBITO' ? '- ' : '+ '}{formatCurrency(Math.abs(e.value))}
+                                          {e.status !== 'PAGO' && <span className="ml-1 text-[10px] text-muted-foreground">({e.status})</span>}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              )}
+
+                              {/* Totais finais */}
+                              <div className="pt-2 border-t flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <div className="text-muted-foreground">
+                                  Valor bruto pago: <span className="font-semibold text-foreground">{formatCurrency(payment.value)}</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-sm">
+                                  <span className="text-muted-foreground">Repasse líquido:</span>
+                                  <span className="font-bold text-emerald-700">
+                                    {bd ? formatCurrency(bd.repasseLiquido) : (payment.splitOwnerValue != null ? formatCurrency(payment.splitOwnerValue) : "-")}
+                                  </span>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+
+                      {/* Resumo de descontos do mês */}
+                      {(month.totals.totalIptu || month.totals.totalCondominio || month.totals.totalIntermediacao || month.totals.totalOutrosDebitos) ? (
+                        <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs space-y-1">
+                          <p className="font-semibold text-amber-900 mb-2">Resumo de descontos do mês:</p>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            {!!month.totals.totalIptu && (
+                              <div><span className="text-muted-foreground">IPTU:</span> <span className="font-medium">{formatCurrency(month.totals.totalIptu)}</span></div>
+                            )}
+                            {!!month.totals.totalCondominio && (
+                              <div><span className="text-muted-foreground">Condomínio:</span> <span className="font-medium">{formatCurrency(month.totals.totalCondominio)}</span></div>
+                            )}
+                            {!!month.totals.totalIntermediacao && (
+                              <div><span className="text-muted-foreground">Intermediação:</span> <span className="font-medium">{formatCurrency(month.totals.totalIntermediacao)}</span></div>
+                            )}
+                            {!!month.totals.totalOutrosDebitos && (
+                              <div><span className="text-muted-foreground">Outros:</span> <span className="font-medium">{formatCurrency(month.totals.totalOutrosDebitos)}</span></div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </Card>
