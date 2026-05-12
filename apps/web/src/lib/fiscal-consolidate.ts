@@ -192,14 +192,19 @@ export async function consolidateIRRFByOwnerMonth(
             const sharePctRaw = (notes as any).sharePercent;
             const sharePct = typeof sharePctRaw === "number" ? sharePctRaw : 100;
             const isCoOwner = sharePct < 100;
-            // Mantemos compatibilidade com o formato existente: notes.irrfValue
-            // e notes.netToOwner sao do CONTRATO TODO (o demonstrativo aplica
-            // shareRatio na hora de exibir). Nao podemos sobrescrever value
-            // de OwnerEntry coproprietaria com o netToOwner total — value
-            // da OwnerEntry deve continuar sendo a parte do coproprietario.
-            notes.irrfValue = d.irrfValue;
+            const shareRatio = sharePct / 100;
+            // Fix Bug 24: irrfValue e netToOwner em notes devem ser PROPORCIONAIS
+            // ao sharePercent (igual ao Bug 4 do buildOwnerNotes). Antes
+            // gravava o valor do CONTRATO TODO em todas as entries de
+            // coproprietarios — demonstrativos liam o valor cheio em cada
+            // co-owner e mostravam IRRF totalmente errado.
+            notes.irrfValue = isCoOwner
+              ? Math.round(d.irrfValue * shareRatio * 100) / 100
+              : d.irrfValue;
             notes.irrfRate = g.irrfRate;
-            notes.netToOwner = d.netToOwner;
+            notes.netToOwner = isCoOwner
+              ? Math.round(d.netToOwner * shareRatio * 100) / 100
+              : d.netToOwner;
             notes.irrfConsolidatedAt = new Date().toISOString();
             const dataToUpdate: Record<string, unknown> = { notes: JSON.stringify(notes) };
             if (!isCoOwner) {

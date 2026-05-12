@@ -13,12 +13,15 @@ export const IR_TABLE_2025 = [
 // Faixa R$ 5.000,01 a R$ 7.350: aplica tabela normal MENOS reducao parcial
 // Reducao = R$ 978,62 - (0,133145 x base de calculo)
 // Acima de R$ 7.350: tabela progressiva normal sem reducao
+//
+// Fix Bug 23: tabela anterior tinha faixa invalida (min=5000.01, max=2826.65 — max < min).
+// Reescrita corretamente com a tabela progressiva 2026 oficial.
 export const IR_TABLE_2026 = [
-  { min: 0, max: 5000.0, rate: 0, deduction: 0 },
-  { min: 5000.01, max: 2826.65, rate: 0.075, deduction: 169.44 }, // legado, mas a partir de 5000 o piso ja eh este
-  { min: 2826.66, max: 3751.05, rate: 0.15, deduction: 381.44 },
-  { min: 3751.06, max: 4664.68, rate: 0.225, deduction: 662.77 },
-  { min: 4664.69, max: Infinity, rate: 0.275, deduction: 896.0 },
+  { min: 0, max: 2826.65, rate: 0, deduction: 0 },
+  { min: 2826.66, max: 3751.05, rate: 0.075, deduction: 211.97 },
+  { min: 3751.06, max: 4664.68, rate: 0.15, deduction: 493.79 },
+  { min: 4664.69, max: 5752.4, rate: 0.225, deduction: 843.64 },
+  { min: 5752.41, max: Infinity, rate: 0.275, deduction: 1131.26 },
 ];
 
 // Mantem export antigo pra compatibilidade

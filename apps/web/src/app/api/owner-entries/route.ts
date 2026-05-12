@@ -14,7 +14,14 @@ export async function GET(request: NextRequest) {
   const where: Record<string, unknown> = {};
   if (ownerId) where.ownerId = ownerId;
   if (type) where.type = type;
-  if (status && status !== "all") where.status = status;
+  if (status && status !== "all") {
+    where.status = status;
+  } else {
+    // Fix Bug 19: exclui CANCELADO por default. Sem isso, retorno
+    // CNAB e outras batch operations podiam pegar entries canceladas
+    // e re-marcar como PAGO acidentalmente.
+    where.status = { not: "CANCELADO" };
+  }
   if (contractId) where.contractId = contractId;
 
   const includeRelations = {
