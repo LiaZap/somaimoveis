@@ -1191,7 +1191,7 @@ export default function RepassesPage() {
                       Aguardando boleto
                     </TabsTrigger>
                     <TabsTrigger value="pagos" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">
-                      Repassados
+                      ⏳ Não Confirmados
                     </TabsTrigger>
                     <TabsTrigger value="confirmados" className="text-xs h-8 sm:h-7 px-2.5 sm:px-3">
                       ✅ Confirmados Banco
