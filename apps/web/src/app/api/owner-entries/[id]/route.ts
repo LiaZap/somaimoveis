@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
+import { logAudit } from "@/lib/audit-log";
 
 export async function GET(
   request: NextRequest,
@@ -77,7 +78,22 @@ export async function DELETE(
   if (isAuthError(auth)) return auth;
   try {
     const { id } = await params;
+    // Captura snapshot antes de deletar pra log de auditoria — permite
+    // recriar manualmente se exclusao foi por engano.
+    const snapshot = await prisma.ownerEntry.findUnique({ where: { id } });
+    if (!snapshot) {
+      return NextResponse.json({ error: "Lançamento não encontrado" }, { status: 404 });
+    }
     await prisma.ownerEntry.delete({ where: { id } });
+    await logAudit({
+      userId: auth.user.id,
+      action: "DELETE",
+      entity: "OwnerEntry",
+      entityId: id,
+      entityName: snapshot.description,
+      changes: JSON.stringify({ snapshot }),
+      request,
+    });
     return NextResponse.json({ message: "Lançamento excluído com sucesso" });
   } catch (error: any) {
     if (error?.code === "P2025") {
