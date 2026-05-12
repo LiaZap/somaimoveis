@@ -54,9 +54,10 @@ export async function POST(request: NextRequest) {
         paidAt: true,
         value: true,
         status: true,
+        notes: true,
+        createdAt: true,
         owner: { select: { name: true } },
       },
-      orderBy: { paidAt: "asc" },
     });
 
     // Agrupa por chave: ownerId + contractId + description + value
@@ -87,8 +88,27 @@ export async function POST(request: NextRequest) {
 
     for (const [, list] of Object.entries(groups)) {
       if (list.length < 2) continue;
-      // Mantem a 1a (mais antiga por paidAt)
-      const [keep, ...rest] = list;
+      // Estrategia de selecao do "keep":
+      //  1. PREFERE entry com bankConfirmed=true em notes (confirmada pelo Sicredi)
+      //  2. SE NAO, prefere a com paidAt MAIS RECENTE (paga via CNAB recente)
+      //  3. SE NAO tem paidAt, prefere a mais recente por createdAt
+      //
+      // Antes mantinha a mais antiga por paidAt — mas geralmente a antiga
+      // e a "fantasma" criada por sync errado em mes anterior, enquanto a
+      // recente foi a efetivamente paga via CNAB do mes corrente.
+      const sorted = [...list].sort((a, b) => {
+        const aConfirmed = (() => { try { return JSON.parse(a.notes || "{}").bankConfirmed === true; } catch { return false; } })();
+        const bConfirmed = (() => { try { return JSON.parse(b.notes || "{}").bankConfirmed === true; } catch { return false; } })();
+        if (aConfirmed && !bConfirmed) return -1;
+        if (bConfirmed && !aConfirmed) return 1;
+        // Tiebreaker: paidAt desc (mais recente primeiro)
+        const aPaid = a.paidAt ? a.paidAt.getTime() : 0;
+        const bPaid = b.paidAt ? b.paidAt.getTime() : 0;
+        if (aPaid !== bPaid) return bPaid - aPaid;
+        // Tiebreaker final: createdAt desc
+        return (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0);
+      });
+      const [keep, ...rest] = sorted;
       for (const dupe of rest) {
         toCancel.push({
           id: dupe.id,
