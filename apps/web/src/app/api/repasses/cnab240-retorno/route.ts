@@ -51,7 +51,11 @@ export async function POST(request: NextRequest) {
       favorecido: string;
       documento: string;
       valor: number;
-      status: "sucesso" | "erro" | "sem_match";
+      valorEsperado?: number;
+      valorEfetivado?: number;
+      valorDivergente?: boolean;
+      diffValor?: number;
+      status: "sucesso" | "erro" | "sem_match" | "divergente";
       ocorrencias: string;
       entryIds?: string[];
       ownerName?: string;
@@ -91,11 +95,48 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
+      // Detecta divergencia entre valor enviado/efetivado e o esperado.
+      // Esperado = soma dos creditos PAGO do owner no mes - debitos PAGO.
+      // Se divergente (>= R$ 0,01), NAO marca bankConfirmed=true mesmo que
+      // pgto.sucesso=true — o admin precisa revisar manualmente.
+      // Caso classico: familia Kampf recebeu R$ 2,33 (sucesso!) mas o
+      // repasse era R$ 974,61 — divergencia silenciosa nao podia
+      // virar "Confirmado Banco" sem flag de aviso.
+      const valorPagoBanco = pgto.valorEfetivado > 0 ? pgto.valorEfetivado : pgto.valorPagamento;
+      const totalEsperadoCredito = matchedEntries
+        .filter(e => e.type === "CREDITO" && e.status === "PAGO")
+        .reduce((s, e) => s + e.value, 0);
+      // Tambem precisa considerar debitos PAGO que foram descontados
+      const ownerIdMatched = matchedEntries[0]?.ownerId;
+      let totalDebitosPagos = 0;
+      if (ownerIdMatched) {
+        const debitos = await prisma.ownerEntry.findMany({
+          where: {
+            ownerId: ownerIdMatched,
+            type: "DEBITO",
+            status: "PAGO",
+            // Pegar debitos pagos recentemente (junto com o repasse)
+            paidAt: {
+              gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+            },
+          },
+          select: { value: true },
+        });
+        totalDebitosPagos = debitos.reduce((s, d) => s + d.value, 0);
+      }
+      const valorEsperado = Math.round((totalEsperadoCredito - totalDebitosPagos) * 100) / 100;
+      const diff = Math.round((valorPagoBanco - valorEsperado) * 100) / 100;
+      const valorDivergente = Math.abs(diff) >= 0.01 && valorEsperado > 0;
+
       const resultado: typeof resultados[0] = {
         favorecido: pgto.favorecidoNome,
         documento: docEmpresa,
         valor: pgto.valorPagamento,
-        status: pgto.sucesso ? "sucesso" : "erro",
+        valorEsperado,
+        valorEfetivado: valorPagoBanco,
+        valorDivergente,
+        diffValor: diff,
+        status: pgto.sucesso ? (valorDivergente ? "divergente" : "sucesso") : "erro",
         ocorrencias: ocorrenciasStr,
         entryIds: matchedEntries.map(e => e.id),
         ownerName: matchedEntries[0].owner.name,
@@ -113,10 +154,9 @@ export async function POST(request: NextRequest) {
       }
 
       // Confirmacao pelo Sicredi: marca em notes que o pagamento foi
-      // efetivado pelo banco. Permite distinguir "PAGO confirmado pelo
-      // banco" de "PAGO marcado manualmente pelo admin via confirm do CNAB"
-      // mesmo nos casos em que ja estava PAGO.
-      if (pgto.sucesso && matchedEntries.length > 0) {
+      // efetivado pelo banco. SO MARCA se valor bateu — se divergente,
+      // mantem como "Nao Confirmado" pra admin revisar.
+      if (pgto.sucesso && !valorDivergente && matchedEntries.length > 0) {
         const ocorrencias = pgto.ocorrencias.map(o => o.codigo).join(",");
         for (const entry of matchedEntries) {
           // skip se ja confirmado (evita re-processamento desnecessario)
@@ -269,6 +309,7 @@ export async function POST(request: NextRequest) {
         entriesRevertidas: resultados.reduce((s, r) => s + (r.entriesRevertidas || 0), 0),
         debitosRevertidos: totalDebitosRevertidos,
         confirmadosBanco: totalConfirmados,
+        valoresDivergentes: resultados.filter(r => r.valorDivergente).length,
       },
       resultados,
     });
