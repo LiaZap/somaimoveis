@@ -53,9 +53,28 @@ export async function buildDemonstrativo(
   const periodStart = monthStart.toLocaleDateString("pt-BR", { timeZone: "UTC" });
   const periodEnd = monthEnd.toLocaleDateString("pt-BR", { timeZone: "UTC" });
 
-  const owner = await prisma.owner.findUnique({ where: { id: ownerId } });
+  const owner = await prisma.owner.findUnique({
+    where: { id: ownerId },
+    include: {
+      payoutBeneficiaries: {
+        orderBy: { order: "asc" },
+        select: { name: true, percentage: true, pixKey: true, pixKeyType: true },
+      },
+    },
+  });
   if (!owner) {
     return { ok: false, status: 404, error: "Proprietario nao encontrado" };
+  }
+
+  // Se proprietario marcou "nao declara", suprime demonstrativo.
+  // Caso conversado na reuniao 12/05/2026: imoveis adquiridos onde o
+  // dono pediu pra nao gerar NFS-e nem demonstrativo (assume risco fiscal).
+  if ((owner as any).naoDeclaraImob === true) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Demonstrativo nao disponivel para este proprietario (configurado como 'nao declara imovel').",
+    };
   }
 
   // Buscar entries do proprietário no mês. Janela de carry-forward
@@ -721,6 +740,40 @@ export async function buildDemonstrativo(
         account: bankAccount || "",
         valor: totalMovimento,
       },
+      // Split de beneficiarios: lista quem mais recebe parte do liquido
+      // (caso Roberta — paga 100% do imposto mas reparte com a irma).
+      // Mostra como OBSERVACAO no demonstrativo, sem afetar valores
+      // fiscais (IRRF, totais, etc) — Owner continua sendo o unico
+      // contribuinte. Reuniao 12/05/2026.
+      splitBeneficiarios: ((owner as any).payoutBeneficiaries || []).length > 0
+        ? {
+            ownerNome: owner.name,
+            ownerPercent: Math.max(
+              0,
+              100 - ((owner as any).payoutBeneficiaries || []).reduce(
+                (s: number, b: any) => s + (b.percentage || 0),
+                0
+              )
+            ),
+            beneficiarios: ((owner as any).payoutBeneficiaries || []).map((b: any) => ({
+              nome: b.name,
+              percentual: b.percentage,
+              chavePix: b.pixKey,
+              tipoChavePix: b.pixKeyType,
+              valorEstimado: Math.round((totalMovimento * (b.percentage || 0) / 100) * 100) / 100,
+            })),
+            valorOwnerEstimado: Math.round(
+              (totalMovimento *
+                Math.max(0, 100 - ((owner as any).payoutBeneficiaries || []).reduce(
+                  (s: number, b: any) => s + (b.percentage || 0),
+                  0
+                )) /
+                100) *
+                100
+            ) / 100,
+            observacao: "O proprietario e responsavel por 100% da declaracao fiscal. O split acima e apenas a divisao do liquido para fins de PIX.",
+          }
+        : null,
     },
   };
 }

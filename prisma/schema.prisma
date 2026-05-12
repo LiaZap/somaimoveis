@@ -192,11 +192,18 @@ model Owner {
   portalToken          String?   @unique // token inicial (fornecido pela imobiliaria)
   portalPassword       String? // hash da senha definida pelo proprietario apos 1o acesso
   portalActive         Boolean   @default(false)
+  // Fiscal: nao gerar NFS-e nem demonstrativo
+  // Usado quando o proprietario NAO declara o imovel a Receita
+  // (caso explicado pelo Leo na reuniao 12/05/2026 — imoveis adquiridos
+  // ja alugados, dono pediu pra nao gerar nota nem demonstrativo).
+  // Marca por owner — todos os contratos/imoveis dele herdam.
+  naoDeclaraImob       Boolean   @default(false)
+
   // Meta
-  notes                String?
-  active               Boolean   @default(true)
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Rastreabilidade
   createdById String?

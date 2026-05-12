@@ -80,6 +80,7 @@ export async function PUT(
       thirdPartyPixKeyType: body.thirdPartyPixKeyType || null,
       thirdPartyPix: body.thirdPartyPix || null,
       paymentDay: body.paymentDay ? (typeof body.paymentDay === "number" ? body.paymentDay : parseInt(body.paymentDay)) : undefined,
+      naoDeclaraImob: typeof body.naoDeclaraImob === "boolean" ? body.naoDeclaraImob : undefined,
       notes: body.notes || null,
     };
     // Remove undefined keys

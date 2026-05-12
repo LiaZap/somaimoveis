@@ -144,6 +144,19 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
+    // Pula se proprietario marcou "nao declara imovel"
+    // Reuniao 12/05/2026: caso de imoveis adquiridos ja alugados onde
+    // o dono optou por nao declarar (assume risco fiscal).
+    if ((entry.owner as any).naoDeclaraImob === true) {
+      results.push({
+        ownerEntryId: entry.id,
+        ownerName: entry.owner.name,
+        success: false,
+        error: "Proprietario configurado como 'nao declara imovel' — NFS-e suprimida",
+      });
+      continue;
+    }
+
     // Calcula a taxa adm a partir do notes do entry (foi salva pelo billing)
     let adminFeeValue = 0;
     let adminFeePercent = entry.contract?.adminFeePercent || 10;

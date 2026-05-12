@@ -181,6 +181,7 @@ export async function POST(request: NextRequest) {
         birthDate: body.birthDate ? new Date(body.birthDate + "T12:00:00") : null,
         rgIssuer: body.rgIssuer || null,
         paymentDay: body.paymentDay ? parseInt(body.paymentDay) : 10,
+        naoDeclaraImob: body.naoDeclaraImob === true,
         notes: body.notes || null,
         createdById: auth.user.id,
       },
