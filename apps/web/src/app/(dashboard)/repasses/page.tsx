@@ -2323,6 +2323,35 @@ export default function RepassesPage() {
                     <p className="text-lg font-bold text-violet-700">{retornoResult.resumo.entriesMarcadas || retornoResult.resumo.marcadosPago}</p>
                   </div>
                 </div>
+                {/* Linha extra: divergencias + complementos + revertidos + confirmados banco */}
+                {(retornoResult.resumo.valoresDivergentes > 0 || retornoResult.resumo.complementosCriados > 0 || retornoResult.resumo.revertidos > 0 || retornoResult.resumo.confirmadosBanco > 0) && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    {retornoResult.resumo.valoresDivergentes > 0 && (
+                      <div className="bg-amber-50 rounded-lg p-3 text-center">
+                        <p className="text-xs text-amber-600 font-medium">Valor Divergente</p>
+                        <p className="text-lg font-bold text-amber-700">{retornoResult.resumo.valoresDivergentes}</p>
+                      </div>
+                    )}
+                    {retornoResult.resumo.complementosCriados > 0 && (
+                      <div className="bg-orange-50 rounded-lg p-3 text-center">
+                        <p className="text-xs text-orange-600 font-medium">Complementos Gerados</p>
+                        <p className="text-lg font-bold text-orange-700">{retornoResult.resumo.complementosCriados}</p>
+                      </div>
+                    )}
+                    {retornoResult.resumo.revertidos > 0 && (
+                      <div className="bg-rose-50 rounded-lg p-3 text-center">
+                        <p className="text-xs text-rose-600 font-medium">Revertidos (Erro)</p>
+                        <p className="text-lg font-bold text-rose-700">{retornoResult.resumo.revertidos}</p>
+                      </div>
+                    )}
+                    {retornoResult.resumo.confirmadosBanco > 0 && (
+                      <div className="bg-teal-50 rounded-lg p-3 text-center">
+                        <p className="text-xs text-teal-600 font-medium">Confirmados Banco</p>
+                        <p className="text-lg font-bold text-teal-700">{retornoResult.resumo.confirmadosBanco}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
                   <span>Data: {retornoResult.arquivo.dataGeracao}</span>
@@ -2348,6 +2377,7 @@ export default function RepassesPage() {
                       {retornoResult.resultados.map((r: any, i: number) => (
                         <TableRow key={i} className={cn(
                           r.status === "erro" && "bg-red-50/50",
+                          r.status === "divergente" && "bg-amber-50/50",
                           r.status === "sucesso" && r.marcadoPago && "bg-emerald-50/50",
                         )}>
                           <TableCell className="text-xs">
@@ -2357,13 +2387,27 @@ export default function RepassesPage() {
                             )}
                           </TableCell>
                           <TableCell className="text-xs font-medium">
-                            {formatCurrency(r.valor)}
+                            <div>{formatCurrency(r.valor)}</div>
+                            {r.valorDivergente && (
+                              <div className="text-[10px] text-amber-700">
+                                Esperado: {formatCurrency(r.valorEsperado)} (diff: {formatCurrency(r.diffValor)})
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell>
                             {r.status === "sucesso" ? (
                               <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">
                                 <CheckCircle2 className="h-3 w-3 mr-0.5" />
                                 OK
+                              </Badge>
+                            ) : r.status === "divergente" ? (
+                              <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">
+                                <AlertCircle className="h-3 w-3 mr-0.5" />
+                                VALOR DIVERGE
+                              </Badge>
+                            ) : r.status === "sem_match" ? (
+                              <Badge className="bg-gray-100 text-gray-600 border-gray-200 text-[10px]">
+                                SEM MATCH
                               </Badge>
                             ) : (
                               <Badge className="bg-red-100 text-red-700 border-red-200 text-[10px]">
