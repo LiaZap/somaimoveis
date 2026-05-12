@@ -37,6 +37,14 @@ export async function POST(request: NextRequest) {
 
     if (monthFilter && /^\d{4}-\d{2}$/.test(monthFilter)) {
       const [y, m] = monthFilter.split("-").map(Number);
+      // Fix Bug 31: valida bounds do mes (1-12) pra evitar Date overflow
+      // (ex: "2026-00" => mes anterior, "2026-13" => jan/2027).
+      if (m < 1 || m > 12 || y < 2000 || y > 2100) {
+        return NextResponse.json(
+          { error: `month invalido: ${monthFilter} (esperado YYYY-MM com m em 1-12)` },
+          { status: 400 }
+        );
+      }
       where.dueDate = {
         gte: new Date(y, m - 1, 1),
         lt: new Date(y, m, 1),

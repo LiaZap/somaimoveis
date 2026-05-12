@@ -85,7 +85,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const installments = parseInt(body.installments) || 1;
+  // Fix Bug 17: limita installments a 60 (5 anos) pra evitar DoS.
+  const installmentsRaw = parseInt(body.installments) || 1;
+  const installments = Math.max(1, Math.min(60, installmentsRaw));
+  // Valida value como numero finito
+  const valueNum = parseFloat(body.value as string);
+  if (!Number.isFinite(valueNum) || valueNum < 0) {
+    return NextResponse.json({ error: "value deve ser um numero positivo finito" }, { status: 400 });
+  }
   const isRecurring = body.isRecurring === true;
   const destination = body.destination || null;
   const baseDueDate = body.dueDate

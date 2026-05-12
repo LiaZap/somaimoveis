@@ -97,7 +97,15 @@ export function applyFineInterestSplit(
     };
   }
 
-  const dia = new Date(input.paidAt).getDate();
+  // Fix Bug 29: usar timezone São Paulo pra extrair o dia.
+  // Antes, `new Date(paidAt).getDate()` usava timezone local do servidor.
+  // Boleto pago 10/05 às 23:30 BRT vira 11/05 02:30 UTC — em servidor UTC,
+  // getDate() retornava 11 e juros/multa passavam indevidamente do imob
+  // para o owner.
+  const diaStr = new Date(input.paidAt).toLocaleDateString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+  });
+  const dia = parseInt(diaStr.slice(0, 2), 10);
   const dentroDoPrazo = dia <= input.diaCorte;
 
   if (dentroDoPrazo) {
