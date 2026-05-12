@@ -210,16 +210,29 @@ export async function GET(request: NextRequest) {
         lt: new Date(y, m, 1),
       };
     }
-  } else {
-    // Default (PENDENTE ou all): mostra debitos do mes atual + anteriores
-    // que ainda estao PENDENTES (carry-forward natural). Tambem inclui
-    // debitos sem dueDate (lancamentos avulsos).
+  } else if (status === "PENDENTE") {
+    // Aba PIX/TED: debitos PENDENTES a descontar do proximo repasse.
+    // Inclui mes atual + anteriores (carry-forward) + sem dueDate.
     debitWhere.status = "PENDENTE";
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [y, m] = month.split("-").map(Number);
       debitWhere.OR = [
-        { dueDate: { lt: new Date(y, m, 1) } }, // mes atual ou anteriores
-        { dueDate: null }, // sem data
+        { dueDate: { lt: new Date(y, m, 1) } },
+        { dueDate: null },
+      ];
+    }
+  } else {
+    // status=all (aba "Todos"): mostra debitos do mes selecionado
+    // independente do status (PENDENTE ou PAGO) — pra totalLiquido
+    // refletir o REAL liquido (com descontos PAGOs aplicados).
+    // Sem isso, Julio Cesar aparecia com liquido R$ 5.594 mesmo apos
+    // DARF + condominios virarem PAGO, em vez do R$ 4.678 real.
+    debitWhere.status = { in: ["PENDENTE", "PAGO"] };
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [y, m] = month.split("-").map(Number);
+      debitWhere.OR = [
+        { dueDate: { lt: new Date(y, m + 1, 1) } }, // mes atual e anteriores
+        { dueDate: null },
       ];
     }
   }
