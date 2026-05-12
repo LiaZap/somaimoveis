@@ -37,10 +37,35 @@ export async function POST(request: NextRequest) {
     const monthEnd = new Date(y, m, 1);
 
     // Busca todas as entries do mes (CANCELADO de fora)
+    // Tag de referencia do mes (ex: "04/2026") usada na description
+    // de entries de IPTU/condominio/etc. Isso permite pegar entries
+    // que se referem ao mes mas tem dueDate em outro (ex: IPTU 04/2026
+    // vencendo em 05/05/2026).
+    const mmRef = String(m).padStart(2, "0");
+    const yyRef = String(y);
+    const refTag = `${mmRef}/${yyRef}`;
+    // Janela ampla de dueDate pra capturar entries adjacentes
+    const dueDateMin = new Date(monthStart);
+    dueDateMin.setMonth(dueDateMin.getMonth() - 2);
+    const dueDateMax = new Date(monthEnd);
+    dueDateMax.setMonth(dueDateMax.getMonth() + 2);
+
     const entries = await prisma.ownerEntry.findMany({
       where: {
         status: { not: "CANCELADO" },
-        dueDate: { gte: monthStart, lt: monthEnd },
+        OR: [
+          // Entries com dueDate no mes alvo
+          { dueDate: { gte: monthStart, lt: monthEnd } },
+          // Entries cuja description contem a tag do mes (ex: "04/2026"),
+          // com dueDate dentro de janela de +/- 2 meses (evita pegar
+          // entries de outros anos com tag similar).
+          {
+            AND: [
+              { description: { contains: refTag } },
+              { dueDate: { gte: dueDateMin, lt: dueDateMax } },
+            ],
+          },
+        ],
       },
       select: {
         id: true,
