@@ -39,12 +39,28 @@ export async function POST(request: NextRequest) {
 
     // Indexar entries por CPF (últimos 8 dígitos) para match rápido
     const entriesByCpfSuffix: Record<string, typeof allEntries> = {};
+    // Fix Bug 22: detecta collision de CPF suffix entre owners diferentes.
+    // 2 owners com mesmos ultimos 8 digitos de CPF (raro mas possivel)
+    // seriam ambos marcados PAGO de uma so linha do retorno. Quando
+    // detectado, isola por ownerId pra evitar cross-contamination.
+    const cpfSuffixToOwners: Record<string, Set<string>> = {};
     for (const entry of allEntries) {
       const cpfClean = entry.owner.cpfCnpj.replace(/\D/g, "");
       const suffix = cpfClean.slice(-8);
       const key = `REP-${suffix}`;
+      if (!cpfSuffixToOwners[key]) cpfSuffixToOwners[key] = new Set();
+      cpfSuffixToOwners[key].add(entry.owner.id);
       if (!entriesByCpfSuffix[key]) entriesByCpfSuffix[key] = [];
       entriesByCpfSuffix[key].push(entry);
+    }
+    const collisions = Object.entries(cpfSuffixToOwners)
+      .filter(([, owners]) => owners.size > 1)
+      .map(([k, owners]) => ({ key: k, ownerIds: Array.from(owners) }));
+    if (collisions.length > 0) {
+      console.warn(
+        `[CNAB240 Retorno] Collision de CPF suffix detectada (${collisions.length} casos). Processamento pode ser ambiguo:`,
+        collisions
+      );
     }
 
     const resultados: {

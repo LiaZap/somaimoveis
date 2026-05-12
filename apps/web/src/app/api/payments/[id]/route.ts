@@ -262,12 +262,13 @@ export async function DELETE(
       where: { paymentId: id },
     });
 
-    // Limpar owner entries geradas para este pagamento (mesmo contrato e vencimento)
+    // Fix Bug 16: limpa owner entries de REPASSE E GARANTIA (antes so REPASSE).
+    // Tambem aceita varias entries (caso coproprietarios = N entries).
     await prisma.ownerEntry.deleteMany({
       where: {
         contractId: payment.contractId,
         dueDate: payment.dueDate,
-        category: "REPASSE",
+        category: { in: ["REPASSE", "GARANTIA"] },
         status: "PENDENTE",
       },
     });

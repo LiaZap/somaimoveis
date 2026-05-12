@@ -157,6 +157,18 @@ export async function POST(request: NextRequest) {
 
       const useThirdParty = !!o.thirdPartyName;
 
+      // Fix Bug 21: valida CPF/CNPJ antes de gerar (comprimento exato).
+      // Sicredi retorna AE (tipo/numero inscricao invalido) quando o
+      // documento nao tem 11 (CPF) ou 14 (CNPJ) digitos.
+      const docToCheck = (useThirdParty ? o.thirdPartyDocument || o.cpfCnpj : o.cpfCnpj).replace(/\D/g, "");
+      if (docToCheck.length !== 11 && docToCheck.length !== 14) {
+        erros.push({
+          proprietario: o.name,
+          motivo: `CPF/CNPJ invalido (${docToCheck.length} digitos, esperado 11 ou 14): ${docToCheck}`,
+        });
+        continue;
+      }
+
       // Validar dados bancarios
       const agencia = useThirdParty
         ? o.thirdPartyAgency

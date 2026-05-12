@@ -38,6 +38,12 @@ export async function GET(request: NextRequest) {
   if (status && status !== "todos") {
     tenantWhere.status = status;
     ownerWhere.status = status;
+  } else {
+    // Fix Bug 18: exclui CANCELADO por default. Antes a list pegava
+    // cancelados misturados (e o stats nao), gerando totais divergentes
+    // entre a tabela e os cards de resumo. Pass status="todos" pra incluir.
+    tenantWhere.status = { not: "CANCELADO" };
+    ownerWhere.status = { not: "CANCELADO" };
   }
   // Busca tokenizada em ambos lados.
   const tenantSearch = buildSearchWhere(search, [
