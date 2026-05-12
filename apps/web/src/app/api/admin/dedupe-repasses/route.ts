@@ -68,17 +68,18 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Agrupa por chave: ownerId + contractId + description + value
-    // (sem dueDate na chave — captura o caso comum onde sync gerou
-    // duplicata com dueDate ligeiramente diferente, ex: 05/05 vs 06/04
-    // para o mesmo "Repasse aluguel 04/2026". Caso Katiane Katzer.)
+    // Agrupa por chave: ownerId + contractId + description + value arredondado.
+    // Tolerancia de centavos: arredondamentos em coproprietarios (33.33% x N)
+    // podem gerar value 1.949,80 vs 1.949,81 (mesma duplicata, diff 1 centavo).
+    // Por isso usamos Math.round(value) (inteiro reais) na chave — captura
+    // duplicatas com drift de ate ~50 centavos.
     const groups: Record<string, typeof entries> = {};
     for (const e of entries) {
       const key = [
         e.ownerId,
         e.contractId || "noContract",
         e.description,
-        e.value.toFixed(2),
+        Math.round(e.value).toString(),
       ].join("|");
       if (!groups[key]) groups[key] = [];
       groups[key].push(e);
