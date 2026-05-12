@@ -72,6 +72,15 @@ export async function POST(request: NextRequest) {
     // Entries com sucesso confirmado pelo banco — marcadas em notes
     // pra distinguir de PAGO "manual" (marcado via confirm do CNAB).
     const entryIdsToConfirm: Array<{ id: string; notes: string | null; ocorrencias: string }> = [];
+    // Complementos a criar quando o Sicredi efetivou MENOS que o esperado
+    // (diff negativo). Geram OwnerEntry CREDITO PENDENTE pra restituir
+    // a diferenca no proximo CNAB.
+    const complementosACriar: Array<{
+      ownerId: string;
+      ownerName: string;
+      valor: number;
+      refDocEmpresa: string;
+    }> = [];
 
     for (const pgto of retorno.pagamentos) {
       const docEmpresa = pgto.documentoEmpresa.trim();
@@ -151,6 +160,31 @@ export async function POST(request: NextRequest) {
         }
         resultado.marcadoPago = true;
         resultado.entriesMarcadas = pendentes.length;
+      }
+
+      // Se divergente NEGATIVO (Sicredi mandou menos que o esperado),
+      // marca complemento pra criar OwnerEntry CREDITO PENDENTE com a
+      // diferenca — vai no proximo CNAB pra restituir.
+      // Idempotente: skip se ja existe complemento gerado por esse mesmo
+      // retorno (notes.refDocEmpresa).
+      if (valorDivergente && diff < 0 && ownerIdMatched) {
+        const jaExiste = await prisma.ownerEntry.findFirst({
+          where: {
+            ownerId: ownerIdMatched,
+            category: "REPASSE",
+            status: { not: "CANCELADO" },
+            notes: { contains: `"refDocEmpresa":"${docEmpresa}"` },
+          },
+          select: { id: true },
+        });
+        if (!jaExiste) {
+          complementosACriar.push({
+            ownerId: ownerIdMatched,
+            ownerName: matchedEntries[0].owner.name,
+            valor: Math.abs(diff),
+            refDocEmpresa: docEmpresa,
+          });
+        }
       }
 
       // Confirmacao pelo Sicredi: marca em notes que o pagamento foi
@@ -265,6 +299,43 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Cria OwnerEntries de complemento pra cada owner que recebeu MENOS
+    // que o esperado. Esses CREDITOs PENDENTES entram no proximo CNAB
+    // pra restituir a diferenca.
+    let totalComplementosCriados = 0;
+    const complementosCriadosDetalhe: Array<{ ownerName: string; valor: number; entryId: string }> = [];
+    if (complementosACriar.length > 0) {
+      const dueDate = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+      const refMonth = `${String(new Date().getMonth() + 1).padStart(2, "0")}/${new Date().getFullYear()}`;
+      for (const c of complementosACriar) {
+        const created = await prisma.ownerEntry.create({
+          data: {
+            type: "CREDITO",
+            category: "REPASSE",
+            description: `Complemento Repasse — diferenca retorno CNAB`,
+            value: Math.round(c.valor * 100) / 100,
+            dueDate,
+            ownerId: c.ownerId,
+            status: "PENDENTE",
+            notes: JSON.stringify({
+              isComplemento: true,
+              fromRetornoImport: true,
+              refDocEmpresa: c.refDocEmpresa,
+              refMonth,
+              motivoComplemento: "Valor efetivado pelo banco menor que esperado",
+              criadoEm: new Date().toISOString(),
+            }),
+          },
+        });
+        totalComplementosCriados++;
+        complementosCriadosDetalhe.push({
+          ownerName: c.ownerName,
+          valor: c.valor,
+          entryId: created.id,
+        });
+      }
+    }
+
     // Marca bankConfirmed=true em notes das entries que tiveram sucesso
     // no retorno. Distingue "PAGO confirmado pelo banco" de "PAGO marcado
     // manualmente pelo admin via confirm do CNAB".
@@ -310,6 +381,8 @@ export async function POST(request: NextRequest) {
         debitosRevertidos: totalDebitosRevertidos,
         confirmadosBanco: totalConfirmados,
         valoresDivergentes: resultados.filter(r => r.valorDivergente).length,
+        complementosCriados: totalComplementosCriados,
+        complementosDetalhe: complementosCriadosDetalhe,
       },
       resultados,
     });
