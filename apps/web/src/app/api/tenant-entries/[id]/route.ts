@@ -89,7 +89,7 @@ export async function DELETE(
       entity: "TenantEntry",
       entityId: id,
       entityName: snapshot.description,
-      changes: JSON.stringify({ snapshot }),
+      changes: { snapshot: snapshot as unknown as Record<string, unknown> },
       request,
     });
     return NextResponse.json({ message: "Lançamento excluído com sucesso" });
