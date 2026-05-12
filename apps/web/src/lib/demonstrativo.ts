@@ -77,12 +77,12 @@ export async function buildDemonstrativo(
     };
   }
 
-  // Buscar entries do proprietário no mês.
-  // Regra: cada lançamento pertence ao mês do seu vencimento (dueDate).
-  // Proprietário e locatário tem um único boleto/repasse por mês —
-  // lançamentos extras (débitos, descontos) acompanham o mesmo mês.
-  // Exceção: débitos PENDENTES de meses anteriores (carry-forward)
-  // e lançamentos avulsos sem dueDate pagos no mês.
+  // Buscar entries do proprietário no mês. Janela de carry-forward
+  // limitada aos 90 dias anteriores ao monthStart (3 meses) — evita
+  // que entries muito antigas vazem pro demonstrativo de meses adiante.
+  const carryForwardStart = new Date(monthStart);
+  carryForwardStart.setDate(carryForwardStart.getDate() - 90);
+
   const entries = await prisma.ownerEntry.findMany({
     where: {
       ownerId,
@@ -92,14 +92,21 @@ export async function buildDemonstrativo(
         { dueDate: { gte: monthStart, lte: monthEnd } },
         // Entries sem dueDate mas pagas no mes (lancamentos avulsos)
         { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lte: monthEnd } }] },
-        // DEBITO PENDENTE de mes anterior (carry-forward — descontados no repasse)
+        // Entries pagas no mes mas com dueDate em ate 90 dias atras
+        {
+          AND: [
+            { paidAt: { gte: monthStart, lte: monthEnd } },
+            { dueDate: { gte: carryForwardStart, lt: monthStart } },
+          ],
+        },
+        // DEBITO PENDENTE de mes anterior (carry-forward, 90 dias)
         {
           AND: [
             { type: "DEBITO" },
             { status: "PENDENTE" },
             {
               OR: [
-                { dueDate: { lt: monthStart } },
+                { dueDate: { gte: carryForwardStart, lt: monthStart } },
                 { dueDate: null },
               ],
             },

@@ -24,9 +24,17 @@ export async function GET(request: NextRequest) {
     const [y, m] = month.split("-").map(Number);
     const monthStart = new Date(y, m - 1, 1);
     const monthEnd = new Date(y, m, 1);
-    // Cada lançamento pertence ao mês do seu vencimento (dueDate).
-    // Um boleto/repasse por mês — lançamentos extras acompanham.
-    creditWhere.dueDate = { gte: monthStart, lt: monthEnd };
+    const dueDateMin = new Date(monthStart);
+    dueDateMin.setDate(dueDateMin.getDate() - 90);
+    creditWhere.OR = [
+      { dueDate: { gte: monthStart, lt: monthEnd } },
+      {
+        AND: [
+          { paidAt: { gte: monthStart, lt: monthEnd } },
+          { dueDate: { gte: dueDateMin, lt: monthStart } },
+        ],
+      },
+    ];
   }
 
   const ownerSelect = {

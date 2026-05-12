@@ -1,32 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { verifyPortalToken } from "@/lib/portal-auth";
-
-interface MonthGroup {
-  month: number;
-  year: number;
-  label: string;
-  payments: {
-    id: string;
-    code: string;
-    dueDate: string;
-    paidAt: string | null;
-    status: string;
-    value: number;
-    paidValue: number | null;
-    splitOwnerValue: number | null;
-    splitAdminValue: number | null;
-    description: string | null;
-    property: string;
-    tenant: string;
-  }[];
-  totals: {
-    totalValue: number;
-    totalPaid: number;
-    totalOwner: number;
-    totalAdmin: number;
-  };
-}
+import { buildDemonstrativo } from "@/lib/demonstrativo";
 
 export async function GET(request: NextRequest) {
   const auth = await verifyPortalToken(request);
@@ -40,143 +14,99 @@ export async function GET(request: NextRequest) {
   try {
     const { ownerId } = auth;
     const { searchParams } = new URL(request.url);
-
-    const year = searchParams.get("year");
-
-    // Achar contratos onde o owner atual eh DIRETO (ownerId) ou
-    // CO-PROPRIETARIO via PropertyOwner. Manoela e Gabriel, por exemplo,
-    // sao co-proprietarios sem ser ownerId principal — precisam aparecer.
-    const propertyShares = await prisma.propertyOwner.findMany({
-      where: { ownerId },
-      select: { propertyId: true, percentage: true },
-    });
-    const sharedPropertyIds = propertyShares.map((s) => s.propertyId);
-    const shareByProperty = new Map(
-      propertyShares.map((s) => [s.propertyId, s.percentage]),
-    );
-
-    // Filtros base — pagamentos cujo contrato tem o owner direto OU cujo
-    // imovel tem co-ownership do owner atual.
-    const where: Record<string, unknown> = {
-      OR: [
-        { ownerId },
-        ...(sharedPropertyIds.length > 0
-          ? [{ contract: { propertyId: { in: sharedPropertyIds } } }]
-          : []),
-      ],
-    };
-
-    if (year) {
-      const y = parseInt(year, 10);
-      where.dueDate = {
-        gte: new Date(y, 0, 1),
-        lt: new Date(y + 1, 0, 1),
-      };
-    }
-
-    // Buscar todos os pagamentos
-    const payments = await prisma.payment.findMany({
-      where,
-      include: {
-        contract: {
-          include: {
-            property: { select: { id: true, title: true } },
-          },
-        },
-        tenant: { select: { name: true } },
-      },
-      orderBy: { dueDate: "desc" },
-    });
-
-    // Agrupar por mes
-    const monthsMap = new Map<string, MonthGroup>();
+    const year = parseInt(searchParams.get("year") || String(new Date().getFullYear()), 10);
 
     const monthNames = [
       "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
       "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
     ];
 
-    for (const payment of payments) {
-      const dueDate = new Date(payment.dueDate);
-      // Agrupa por MES DE REFERENCIA do aluguel (= mes anterior ao vencimento,
-      // ja que cobranca eh in-arrears). Boleto vencendo em maio = aluguel
-      // referente a abril → aparece no grupo "Abril".
-      let m = dueDate.getMonth() - 1;
-      let y = dueDate.getFullYear();
-      if (m < 0) {
-        m = 11;
-        y -= 1;
-      }
-      const key = `${y}-${String(m + 1).padStart(2, "0")}`;
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
+    const lastMonth = year < currentYear ? 12 : currentMonth;
 
-      if (!monthsMap.has(key)) {
-        monthsMap.set(key, {
-          month: m + 1,
-          year: y,
-          label: `${monthNames[m]} ${y}`,
-          payments: [],
-          totals: {
-            totalValue: 0,
-            totalPaid: 0,
-            totalOwner: 0,
-            totalAdmin: 0,
-          },
-        });
-      }
-
-      const group = monthsMap.get(key)!;
-
-      // Calcular split se nao estiver preenchido
-      const adminFeePercent = payment.contract.adminFeePercent ?? 10;
-      const paidValue = payment.paidValue ?? payment.value;
-      const splitAdminTotal =
-        payment.splitAdminValue ?? paidValue * (adminFeePercent / 100);
-      const splitOwnerTotal =
-        payment.splitOwnerValue ?? paidValue - splitAdminTotal;
-
-      // Se o owner atual eh CO-PROPRIETARIO (nao ownerId direto do contrato),
-      // aplica o share% pra mostrar so a parte que cabe a ele.
-      const propId = payment.contract.property?.id;
-      const isPrincipalOwner = payment.ownerId === ownerId;
-      const sharePercent = !isPrincipalOwner && propId
-        ? (shareByProperty.get(propId) ?? 0)
-        : 100;
-      const shareFactor = sharePercent / 100;
-      const splitAdmin = Math.round(splitAdminTotal * shareFactor * 100) / 100;
-      const splitOwner = Math.round(splitOwnerTotal * shareFactor * 100) / 100;
-
-      group.payments.push({
-        id: payment.id,
-        code: payment.code,
-        dueDate: payment.dueDate.toISOString(),
-        paidAt: payment.paidAt ? payment.paidAt.toISOString() : null,
-        status: payment.status,
-        value: payment.value,
-        paidValue: payment.paidValue,
-        splitOwnerValue: splitOwner,
-        splitAdminValue: splitAdmin,
-        description: payment.description,
-        property: payment.contract.property?.title || "N/A",
-        tenant: payment.tenant?.name || "N/A",
-      });
-
-      // Totais respeitam o share% do owner atual (co-proprietario ve apenas
-      // a parte dele).
-      group.totals.totalValue += payment.value * shareFactor;
-      if (payment.status === "PAGO") {
-        group.totals.totalPaid += paidValue * shareFactor;
-        group.totals.totalOwner += splitOwner;
-        group.totals.totalAdmin += splitAdmin;
-      }
+    interface MonthResult {
+      month: number;
+      year: number;
+      label: string;
+      payments: {
+        id: string;
+        code: string;
+        dueDate: string;
+        paidAt: string | null;
+        status: string;
+        value: number;
+        paidValue: number | null;
+        splitOwnerValue: number | null;
+        splitAdminValue: number | null;
+        description: string | null;
+        property: string;
+        tenant: string;
+      }[];
+      totals: {
+        totalValue: number;
+        totalPaid: number;
+        totalOwner: number;
+        totalAdmin: number;
+      };
     }
 
-    // Ordenar meses por data (mais recente primeiro)
-    const months = Array.from(monthsMap.values()).sort((a, b) => {
+    const months: MonthResult[] = [];
+
+    for (let m = 1; m <= lastMonth; m++) {
+      const monthStr = `${year}-${String(m).padStart(2, "0")}`;
+      const result = await buildDemonstrativo({ ownerId, monthStr });
+      if (!result.ok) continue;
+
+      const data = result.data as any;
+      const contratos = data.contratos || [];
+      const avulsas = data.avulsas || [];
+
+      if (contratos.length === 0 && avulsas.length === 0) continue;
+
+      const totalEntradas = data.totais?.entradas ?? 0;
+      const totalPago = data.totais?.totalPago ?? 0;
+      const totalAdmin = contratos.reduce((s: number, c: any) => s + (c.adminFee || 0), 0);
+
+      // Mes de referencia do demonstrativo (mes anterior ao vencimento)
+      const refMonth = m - 1 === 0 ? 12 : m - 1;
+      const refYear = m - 1 === 0 ? year - 1 : year;
+
+      const payments = contratos.map((c: any) => ({
+        id: c.contractId || "",
+        code: c.code || "",
+        dueDate: new Date(year, m - 1, 5).toISOString(),
+        paidAt: data.dataReferenciaPagamento !== "-" ? data.dataReferenciaPagamento : null,
+        status: totalPago > 0 ? "PAGO" : "PENDENTE",
+        value: c.aluguelBruto || 0,
+        paidValue: null,
+        splitOwnerValue: c.totalLiquido || 0,
+        splitAdminValue: c.adminFee || 0,
+        description: null,
+        property: c.property?.title || "N/A",
+        tenant: c.tenant?.name || "N/A",
+      }));
+
+      months.push({
+        month: refMonth,
+        year: refYear,
+        label: `${monthNames[refMonth - 1]} ${refYear}`,
+        payments,
+        totals: {
+          totalValue: totalEntradas,
+          totalPaid: totalPago,
+          totalOwner: totalPago,
+          totalAdmin: Math.round(totalAdmin * 100) / 100,
+        },
+      });
+    }
+
+    months.sort((a, b) => {
       if (a.year !== b.year) return b.year - a.year;
       return b.month - a.month;
     });
 
-    // Totais gerais
     const grandTotals = months.reduce(
       (acc, m) => ({
         totalValue: acc.totalValue + m.totals.totalValue,
