@@ -1163,9 +1163,10 @@ export default function RepassesPage() {
                       size="sm"
                       className="gap-1.5 h-8 text-xs bg-emerald-600 hover:bg-emerald-700"
                       onClick={() => openConfirmDialog("PAGO")}
+                      title="Use quando o repasse foi feito FORA do CNAB (manual via PIX/TED no banco). Move para a aba 'Não Confirmados' ate o banco confirmar via .RET."
                     >
                       <Send className="h-3.5 w-3.5" />
-                      Confirmar Repasse
+                      Marcar como Pago (Manual)
                     </Button>
                   )}
                 </div>
@@ -2224,12 +2225,12 @@ export default function RepassesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>
               {confirmAction === "PAGO"
-                ? "Confirmar Repasse"
+                ? "Marcar como Pago (Manual)"
                 : "Reverter para Pendente"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirmAction === "PAGO"
-                ? `Deseja marcar ${selectedEntries.size} repasse(s) como PAGO no valor líquido de ${formatCurrency(selectedTotal)}? Esta acao confirma que o repasse foi realizado.`
+                ? `Deseja marcar ${selectedEntries.size} repasse(s) como PAGO no valor líquido de ${formatCurrency(selectedTotal)}? Use isso quando o repasse foi feito MANUALMENTE no banco (fora do CNAB). Eles vão para a aba "⏳ Não Confirmados" até o banco confirmar via .RET ou webhook.`
                 : `Deseja reverter ${selectedEntries.size} repasse(s) para PENDENTE?`}
             </AlertDialogDescription>
           </AlertDialogHeader>
