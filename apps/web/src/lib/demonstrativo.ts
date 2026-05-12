@@ -58,25 +58,43 @@ export async function buildDemonstrativo(
     return { ok: false, status: 404, error: "Proprietario nao encontrado" };
   }
 
-  // Buscar TODAS as entries do proprietário no mês.
-  // Para DEBITOs PENDENTES (carry-forward), inclui tambem os com dueDate
-  // ANTERIOR ao mes — eles aparecem na aba /repasses descontando o
-  // liquido do mes. Sem isso, o demonstrativo divergia da aba (caso
-  // Julio Cesar: DARF de abril PENDENTE nao aparecia no demo de maio).
+  // Buscar entries do proprietário no mês. Janela de carry-forward
+  // limitada aos 90 dias anteriores ao monthStart (3 meses) — evita
+  // que entries muito antigas (caso George Mundstock com REPASSE de
+  // 2025 marcado PAGO em 2026) vazem pro demonstrativo de meses
+  // adiante.
+  const carryForwardStart = new Date(monthStart);
+  carryForwardStart.setDate(carryForwardStart.getDate() - 90);
+
   const entries = await prisma.ownerEntry.findMany({
     where: {
       ownerId,
       status: { not: "CANCELADO" },
       OR: [
+        // Entries com dueDate no mes selecionado
         { dueDate: { gte: monthStart, lte: monthEnd } },
+        // Entries sem dueDate mas pagas no mes (lancamentos avulsos)
         { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lte: monthEnd } }] },
-        { paidAt: { gte: monthStart, lte: monthEnd } },
-        // DEBITO PENDENTE de mes anterior (carry-forward)
+        // Entries pagas no mes mas com dueDate em ate 90 dias atras
+        // (pagamento "tardio" do mes anterior — normal). Antes era
+        // ilimitado, gerando inclusao de entries de 1 ano atras.
+        {
+          AND: [
+            { paidAt: { gte: monthStart, lte: monthEnd } },
+            { dueDate: { gte: carryForwardStart, lt: monthStart } },
+          ],
+        },
+        // DEBITO PENDENTE de mes anterior (carry-forward, 90 dias)
         {
           AND: [
             { type: "DEBITO" },
             { status: "PENDENTE" },
-            { OR: [{ dueDate: { lt: monthStart } }, { dueDate: null }] },
+            {
+              OR: [
+                { dueDate: { gte: carryForwardStart, lt: monthStart } },
+                { dueDate: null },
+              ],
+            },
           ],
         },
       ],
