@@ -163,6 +163,8 @@ function LancamentosContent() {
   const [activeTab, setActiveTab] = useState("todos");
   const [statusFilter, setStatusFilter] = useState("todos");
   const [sourceFilter, setSourceFilter] = useState("todos"); // todos, locatario, proprietario
+  // Filtro por mes (YYYY-MM ou "todos")
+  const [monthFilter, setMonthFilter] = useState("todos");
   // Server-side pagination
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 50;
@@ -203,6 +205,7 @@ function LancamentosContent() {
     if (activeTab === "creditos") params.set("type", "CREDITO");
     if (statusFilter !== "todos") params.set("status", statusFilter);
     if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+    if (monthFilter !== "todos") params.set("month", monthFilter);
     return params.toString();
   }
 
@@ -242,6 +245,7 @@ function LancamentosContent() {
       if (activeTab === "creditos") params.set("type", "CREDITO");
       if (statusFilter !== "todos") params.set("status", statusFilter);
       if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      if (monthFilter !== "todos") params.set("month", monthFilter);
       const res = await fetch(`/api/entries/stats?${params.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
@@ -286,7 +290,7 @@ function LancamentosContent() {
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
-  }, [sourceFilter, activeTab, statusFilter, debouncedSearch]);
+  }, [sourceFilter, activeTab, statusFilter, debouncedSearch, monthFilter]);
 
   // Clear selection when navigating to a different page
   useEffect(() => {
@@ -298,7 +302,7 @@ function LancamentosContent() {
     fetchEntries();
     fetchStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, sourceFilter, activeTab, statusFilter, debouncedSearch]);
+  }, [page, sourceFilter, activeTab, statusFilter, debouncedSearch, monthFilter]);
 
   // Server already filtered — entries are the page rows
   const filteredEntries = entries;
@@ -771,6 +775,27 @@ function LancamentosContent() {
                     <SelectItem value="PENDENTE">Pendente</SelectItem>
                     <SelectItem value="PAGO">Pago</SelectItem>
                     <SelectItem value="CANCELADO">Cancelado</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* Filtro por mes (dueDate) */}
+                <Select value={monthFilter} onValueChange={setMonthFilter}>
+                  <SelectTrigger className="h-10 sm:h-8 w-[150px] text-xs">
+                    <SelectValue placeholder="Mes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos os meses</SelectItem>
+                    {(() => {
+                      const now = new Date();
+                      const opts: React.ReactElement[] = [];
+                      // 12 meses passados + 2 futuros
+                      for (let d = -12; d <= 2; d++) {
+                        const dt = new Date(now.getFullYear(), now.getMonth() + d, 1);
+                        const ym = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+                        const label = dt.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                        opts.push(<SelectItem key={ym} value={ym}>{label}</SelectItem>);
+                      }
+                      return opts;
+                    })()}
                   </SelectContent>
                 </Select>
                 {selectedIds.size > 0 && (

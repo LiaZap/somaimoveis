@@ -18,6 +18,7 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get("type");
   const status = searchParams.get("status");
   const search = (searchParams.get("search") || "").trim();
+  const month = searchParams.get("month");
 
   const includeTenant = source !== "proprietario";
   const includeOwner = source !== "locatario";
@@ -29,6 +30,11 @@ export async function GET(request: NextRequest) {
     // For totals we ignore CANCELADO
     if (status && status !== "todos") where.status = status;
     else where.status = { not: "CANCELADO" };
+    // Filtro por mes (dueDate)
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [y, m] = month.split("-").map(Number);
+      where.dueDate = { gte: new Date(y, m - 1, 1), lt: new Date(y, m, 1) };
+    }
     const fields = target === "tenant"
       ? ["description", "category", "tenant.name", "tenant.cpfCnpj"]
       : ["description", "category", "owner.name", "owner.cpfCnpj"];
