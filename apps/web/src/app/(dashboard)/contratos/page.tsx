@@ -132,6 +132,8 @@ function ContratosContent() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [activeTab, setActiveTab] = useState("todos");
   const [guaranteeFilter, setGuaranteeFilter] = useState("all");
+  // Filtro por mes (startDate em YYYY-MM ou "todos")
+  const [startMonthFilter, setStartMonthFilter] = useState("todos");
   const [formOpen, setFormOpen] = useState(false);
   const [selectedContract, setSelectedContract] = useState<Contract | undefined>(undefined);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -170,6 +172,7 @@ function ContratosContent() {
       if (status) params.set("status", status);
       if (guaranteeFilter !== "all") params.set("guaranteeType", guaranteeFilter);
       if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      if (startMonthFilter !== "todos") params.set("startMonth", startMonthFilter);
       const response = await fetch(`/api/contracts?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
@@ -213,7 +216,7 @@ function ContratosContent() {
 
   useEffect(() => {
     setPage(1);
-  }, [activeTab, guaranteeFilter, debouncedSearch]);
+  }, [activeTab, guaranteeFilter, debouncedSearch, startMonthFilter]);
 
   useEffect(() => {
     fetchStats();
@@ -222,7 +225,7 @@ function ContratosContent() {
   useEffect(() => {
     fetchContracts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, activeTab, guaranteeFilter, debouncedSearch]);
+  }, [page, activeTab, guaranteeFilter, debouncedSearch, startMonthFilter]);
 
   useEffect(() => {
     if (searchParams.get("novo") === "true") {
@@ -357,6 +360,26 @@ function ContratosContent() {
                     <SelectItem value="CAUCAO">Caucao</SelectItem>
                     <SelectItem value="TITULO_CAPITALIZACAO">Titulo Capitalizacao</SelectItem>
                     <SelectItem value="SEM_GARANTIA">Sem Garantia</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* Filtro por mes de inicio do contrato */}
+                <Select value={startMonthFilter} onValueChange={setStartMonthFilter}>
+                  <SelectTrigger className="h-10 sm:h-8 w-[170px] text-xs">
+                    <SelectValue placeholder="Mes de inicio" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos os meses</SelectItem>
+                    {(() => {
+                      const now = new Date();
+                      const opts: React.ReactElement[] = [];
+                      for (let d = -12; d <= 2; d++) {
+                        const dt = new Date(now.getFullYear(), now.getMonth() + d, 1);
+                        const ym = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+                        const label = `Inicio: ${dt.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}`;
+                        opts.push(<SelectItem key={ym} value={ym}>{label}</SelectItem>);
+                      }
+                      return opts;
+                    })()}
                   </SelectContent>
                 </Select>
                 <div className="hidden sm:flex items-center gap-2">

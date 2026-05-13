@@ -27,9 +27,19 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get("type"); // DEBITO | CREDITO | null
   const status = searchParams.get("status"); // PENDENTE | PAGO | CANCELADO | null
   const search = (searchParams.get("search") || "").trim();
+  const month = searchParams.get("month"); // YYYY-MM filtro por dueDate
 
   const tenantWhere: Record<string, unknown> = {};
   const ownerWhere: Record<string, unknown> = {};
+
+  // Filtro por mes da dueDate (YYYY-MM)
+  if (month && /^\d{4}-\d{2}$/.test(month)) {
+    const [y, m] = month.split("-").map(Number);
+    const start = new Date(y, m - 1, 1);
+    const end = new Date(y, m, 1);
+    tenantWhere.dueDate = { gte: start, lt: end };
+    ownerWhere.dueDate = { gte: start, lt: end };
+  }
 
   if (type === "DEBITO" || type === "CREDITO") {
     tenantWhere.type = type;

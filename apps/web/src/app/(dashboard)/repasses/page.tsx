@@ -511,10 +511,14 @@ export default function RepassesPage() {
   const isPagos = activeTab === "pagos" || activeTab === "confirmados";
   const isSelectable = isPendente || isPagos;
 
-  // Summary
+  // Summary — usa totalPago+totalPendente como bruto real
+  // (totalPendente sozinho zera quando todos owners estao PAGO)
   const totalPendente = groups.reduce((sum, g) => sum + g.totalPendente, 0);
   const totalPago = groups.reduce((sum, g) => sum + g.totalPago, 0);
   const totalDebitos = groups.reduce((sum, g) => sum + (g.totalDebitos || 0), 0);
+  // Bruto = todos creditos brutos (PAGO + PENDENTE), antes de descontar debitos
+  const totalBruto = totalPago + totalPendente;
+  // Liquido = bruto - debitos (= o que efetivamente devera ser repassado)
   const totalLiquido = groups.reduce((sum, g) => sum + (g.totalLiquido ?? g.totalPendente), 0);
   const totalProprietarios = groups.length;
   const totalEntries = groups.reduce((sum, g) => sum + g.entries.length, 0);
@@ -1061,7 +1065,7 @@ export default function RepassesPage() {
                   </p>
                   {totalDebitos > 0 && (
                     <p className="text-xs text-red-500 mt-0.5">
-                      Bruto: {formatCurrency(totalPendente)} | Debitos: -{formatCurrency(totalDebitos)}
+                      Bruto: {formatCurrency(totalBruto)} | Debitos: -{formatCurrency(totalDebitos)}
                     </p>
                   )}
                 </div>

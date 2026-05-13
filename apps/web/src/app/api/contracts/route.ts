@@ -15,9 +15,15 @@ export async function GET(request: NextRequest) {
 
     const tenantId = searchParams.get("tenantId");
     const guaranteeType = searchParams.get("guaranteeType");
+    const startMonth = searchParams.get("startMonth"); // YYYY-MM
     const where: Record<string, unknown> = {};
     if (status && status !== "all") where.status = status;
     if (tenantId) where.tenantId = tenantId;
+    // Filtro por mes de inicio do contrato (startDate)
+    if (startMonth && /^\d{4}-\d{2}$/.test(startMonth)) {
+      const [y, m] = startMonth.split("-").map(Number);
+      where.startDate = { gte: new Date(y, m - 1, 1), lt: new Date(y, m, 1) };
+    }
     if (guaranteeType && guaranteeType !== "all") {
       if (guaranteeType === "SEM_GARANTIA") {
         where.OR = [{ guaranteeType: null }, { guaranteeType: "" }, { guaranteeType: "SEM_GARANTIA" }];
