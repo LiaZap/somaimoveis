@@ -77,42 +77,16 @@ export async function buildDemonstrativo(
     };
   }
 
-  // Buscar entries do proprietário no mês. Janela de carry-forward
-  // limitada aos 90 dias anteriores ao monthStart (3 meses) — evita
-  // que entries muito antigas vazem pro demonstrativo de meses adiante.
-  const carryForwardStart = new Date(monthStart);
-  carryForwardStart.setDate(carryForwardStart.getDate() - 90);
-
+  // Fix Paulo 14/05/2026: demonstrativo deve mostrar APENAS entries com
+  // paidAt no mes selecionado (ciclo financeiro real do owner). Remove
+  // carry-forward de dueDate em meses anteriores. Aluguel de abril pago
+  // em maio aparece (paidAt=05) mas itens nao pagos ou de outros meses
+  // sem paidAt em maio sao excluidos.
   const entries = await prisma.ownerEntry.findMany({
     where: {
       ownerId,
       status: { not: "CANCELADO" },
-      OR: [
-        // Entries com dueDate no mes selecionado
-        { dueDate: { gte: monthStart, lte: monthEnd } },
-        // Entries sem dueDate mas pagas no mes (lancamentos avulsos)
-        { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lte: monthEnd } }] },
-        // Entries pagas no mes mas com dueDate em ate 90 dias atras
-        {
-          AND: [
-            { paidAt: { gte: monthStart, lte: monthEnd } },
-            { dueDate: { gte: carryForwardStart, lt: monthStart } },
-          ],
-        },
-        // DEBITO PENDENTE de mes anterior (carry-forward, 90 dias)
-        {
-          AND: [
-            { type: "DEBITO" },
-            { status: "PENDENTE" },
-            {
-              OR: [
-                { dueDate: { gte: carryForwardStart, lt: monthStart } },
-                { dueDate: null },
-              ],
-            },
-          ],
-        },
-      ],
+      paidAt: { gte: monthStart, lte: monthEnd },
     },
     orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
   });
