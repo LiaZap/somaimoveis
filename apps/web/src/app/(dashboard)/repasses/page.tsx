@@ -1935,7 +1935,7 @@ export default function RepassesPage() {
                                       Aluguel bruto: {formatCurrency(Math.round(totalAluguelBruto * 100) / 100)}
                                     </span>
                                   )}
-                                  {totalAdminFee > 0 && (
+                                  {totalAdminFee > 0.01 && (
                                     <span className="text-orange-600 font-medium">
                                       Taxa adm: {adminFeePercent}%
                                     </span>
@@ -2035,6 +2035,7 @@ export default function RepassesPage() {
                                           try {
                                             const n = JSON.parse(entry.notes!);
                                             if (!n.adminFeePercent) return <span>{entry.description}</span>;
+                                            const adminCobrada = !n.adminWaived && (n.adminFeeValue ?? 0) > 0;
                                             return (
                                               <TooltipProvider delayDuration={200}>
                                                 <Tooltip>
@@ -2044,7 +2045,11 @@ export default function RepassesPage() {
                                                   <TooltipContent side="bottom" className="max-w-xs p-3 space-y-1">
                                                     <p className="font-medium border-b pb-1 mb-1 text-xs">Composição do Repasse</p>
                                                     <p className="text-xs">Aluguel bruto: {formatCurrency(n.aluguelBruto)}</p>
-                                                    <p className="text-xs text-red-600">- Taxa adm: {n.adminFeePercent}%</p>
+                                                    {adminCobrada ? (
+                                                      <p className="text-xs text-red-600">- Taxa adm: {n.adminFeePercent}%</p>
+                                                    ) : (
+                                                      <p className="text-xs text-emerald-700">Taxa adm: isenta (intermediacao no mes)</p>
+                                                    )}
                                                     {n.intermediacao > 0 && (
                                                       <p className="text-xs text-red-600">- Intermediação: {formatCurrency(n.intermediacao)}</p>
                                                     )}
