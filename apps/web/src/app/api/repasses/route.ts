@@ -305,24 +305,12 @@ export async function GET(request: NextRequest) {
       const [y, m] = month.split("-").map(Number);
       const monthStart = new Date(y, m - 1, 1);
       const monthEnd = new Date(y, m, 1);
-      const dueDateMin = new Date(monthStart);
-      dueDateMin.setDate(dueDateMin.getDate() - 90);
+      // Fix Leo 13/05: so do mes selecionado. Sem carry-forward de
+      // mes anterior. Cada lançamento fica no seu mes certo.
       tenantWhere.OR = [
         { dueDate: { gte: monthStart, lt: monthEnd } },
-        {
-          AND: [
-            { paidAt: { gte: monthStart, lt: monthEnd } },
-            { dueDate: { gte: dueDateMin, lt: monthStart } },
-          ],
-        },
-        // DEBITO PENDENTE de mes anterior (carry-forward 90 dias)
-        {
-          AND: [
-            { type: "DEBITO" },
-            { status: "PENDENTE" },
-            { dueDate: { gte: dueDateMin, lt: monthStart } },
-          ],
-        },
+        // Sem dueDate (avulsos): mostra so se PAGO no mes
+        { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lt: monthEnd } }] },
       ];
     }
     const tenantEntries = await prisma.tenantEntry.findMany({
