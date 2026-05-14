@@ -349,54 +349,81 @@ export async function GET(request: NextRequest) {
       allOwnerEntriesByKey.add(k);
     }
 
+    // Fix Leo 13/05: contratos com co-owners precisam DIVIDIR o
+    // TenantEntry destination=PROPRIETARIO proporcionalmente entre os
+    // owners. Antes so o ownerId principal recebia (caso CTR-558 Kampf).
+    // Buscar todos os REPASSEs ativos do contrato pra identificar shares.
     for (const te of tenantEntries) {
-      // Resolver owner via contrato ativo do tenant
       const contract = te.tenant?.contracts?.[0];
       if (!contract) continue;
-      const oid = contract.ownerId;
+      const mainOid = contract.ownerId;
 
-      // Skip se ja existe OwnerEntry equivalente (criado pelo billing)
-      const dupKey = `${oid}|${(te.category||"").toUpperCase()}|${te.value}|${(te.dueDate ? new Date(te.dueDate).toISOString().slice(0,10) : "")}`;
-      if (allOwnerEntriesByKey.has(dupKey)) continue;
-
-      // Se o grupo ainda nao existe, criar a partir do owner
-      if (!grouped[oid]) {
-        grouped[oid] = {
-          owner: contract.owner,
-          entries: [],
-          debitEntries: [],
-          totalPendente: 0,
-          totalPago: 0,
-          totalDebitos: 0,
-          totalLiquido: 0,
-        };
+      // Detectar co-owners: REPASSEs do mesmo contrato com shares na descricao
+      const repassesDoCtr = entries.filter(e =>
+        e.contractId === contract.id &&
+        ["REPASSE", "GARANTIA"].includes(e.category) &&
+        e.type === "CREDITO" &&
+        e.status !== "CANCELADO"
+      );
+      // Montar mapa de owner -> share
+      let ownerShares: Array<{ ownerId: string; owner: any; share: number }> = [];
+      for (const r of repassesDoCtr) {
+        const shareMatch = (r.description || "").match(/\((\d+(?:[.,]\d+)?)%\)/);
+        const share = shareMatch ? parseFloat(shareMatch[1].replace(",", ".")) / 100 : 1;
+        if (!ownerShares.find(x => x.ownerId === r.ownerId)) {
+          ownerShares.push({ ownerId: r.ownerId, owner: (r as any).owner, share });
+        }
+      }
+      // Fallback: se nao achou REPASSEs co-owner, usa o contrato principal 100%
+      if (ownerShares.length === 0) {
+        ownerShares = [{ ownerId: mainOid, owner: contract.owner, share: 1 }];
       }
 
-      // CONCEITO LEO: TenantEntry destination=PROPRIETARIO inverte tipo
-      // ao mostrar para o owner. "E um debito do inquilino e credito no
-      // proprietario, se nao fica errado" - Leo
-      //
-      // Exemplo IPTU: inquilino paga (DEBITO no boleto) -> proprietario
-      // recebe (CREDITO no repasse).
-      // Exemplo chamada extra de condominio: inquilino tem desconto
-      // (CREDITO no boleto) -> proprietario absorve (DEBITO no repasse).
+      // Para cada owner do contrato, criar entry proporcional
       const inverso = te.type === "DEBITO" ? "CREDITO" : "DEBITO";
-      const enrichedEntry = {
-        ...te,
-        type: inverso, // type invertido na visao do owner
-        typeOriginalTenant: te.type, // preserva original pra rastreio
-        owner: contract.owner,
-        ownerId: oid,
-        contractId: contract.id,
-        sourceType: "tenant_entry_proprietario",
-      } as any;
-      if (inverso === "CREDITO") {
-        grouped[oid].entries.push(enrichedEntry);
-        if (te.status === "PENDENTE") grouped[oid].totalPendente += te.value;
-        else if (te.status === "PAGO") grouped[oid].totalPago += te.value;
-      } else {
-        grouped[oid].debitEntries.push(enrichedEntry);
-        grouped[oid].totalDebitos += te.value;
+      for (const os of ownerShares) {
+        const oid = os.ownerId;
+        const valorProporcional = Math.round(te.value * os.share * 100) / 100;
+        if (valorProporcional <= 0) continue;
+
+        // Skip se ja existe OwnerEntry equivalente (criado pelo billing) PARA ESTE OWNER
+        const dupKey = `${oid}|${(te.category||"").toUpperCase()}|${valorProporcional}|${(te.dueDate ? new Date(te.dueDate).toISOString().slice(0,10) : "")}`;
+        if (allOwnerEntriesByKey.has(dupKey)) continue;
+
+        if (!grouped[oid]) {
+          grouped[oid] = {
+            owner: os.owner,
+            entries: [],
+            debitEntries: [],
+            totalPendente: 0,
+            totalPago: 0,
+            totalDebitos: 0,
+            totalLiquido: 0,
+          };
+        }
+
+        const enrichedEntry = {
+          ...te,
+          type: inverso,
+          typeOriginalTenant: te.type,
+          owner: os.owner,
+          ownerId: oid,
+          contractId: contract.id,
+          sourceType: "tenant_entry_proprietario",
+          value: valorProporcional,
+          sharePercent: os.share * 100,
+          description: os.share < 1
+            ? `${te.description} (${(os.share * 100).toFixed(2)}%)`
+            : te.description,
+        } as any;
+        if (inverso === "CREDITO") {
+          grouped[oid].entries.push(enrichedEntry);
+          if (te.status === "PENDENTE") grouped[oid].totalPendente += valorProporcional;
+          else if (te.status === "PAGO") grouped[oid].totalPago += valorProporcional;
+        } else {
+          grouped[oid].debitEntries.push(enrichedEntry);
+          grouped[oid].totalDebitos += valorProporcional;
+        }
       }
     }
   } catch (err) {
