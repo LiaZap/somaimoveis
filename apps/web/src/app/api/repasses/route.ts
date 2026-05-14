@@ -335,6 +335,13 @@ export async function GET(request: NextRequest) {
         ],
       },
     };
+    // Fix Paulo 14/05 (parte 2): TenantEntries virtuais devem RESPEITAR o
+    // filtro de status da query. Antes, aba "A Repassar PIX" (status=PENDENTE)
+    // ainda mostrava 97 TenantEntries PAGO virtualizadas porque o filtro de
+    // status nao era aplicado aqui.
+    if (status && status !== "all") {
+      tenantWhere.status = status;
+    }
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [y, m] = month.split("-").map(Number);
       const monthStart = new Date(y, m - 1, 1);
