@@ -361,19 +361,29 @@ export async function GET(request: NextRequest) {
         };
       }
 
-      // CREDITO destinado ao proprietario soma como entry; DEBITO entra como debito.
+      // CONCEITO LEO: TenantEntry destination=PROPRIETARIO inverte tipo
+      // ao mostrar para o owner. "E um debito do inquilino e credito no
+      // proprietario, se nao fica errado" - Leo
+      //
+      // Exemplo IPTU: inquilino paga (DEBITO no boleto) -> proprietario
+      // recebe (CREDITO no repasse).
+      // Exemplo chamada extra de condominio: inquilino tem desconto
+      // (CREDITO no boleto) -> proprietario absorve (DEBITO no repasse).
+      const inverso = te.type === "DEBITO" ? "CREDITO" : "DEBITO";
       const enrichedEntry = {
         ...te,
+        type: inverso, // type invertido na visao do owner
+        typeOriginalTenant: te.type, // preserva original pra rastreio
         owner: contract.owner,
         ownerId: oid,
         contractId: contract.id,
-        sourceType: "tenant_entry_proprietario", // tag pra UI
+        sourceType: "tenant_entry_proprietario",
       } as any;
-      if (te.type === "CREDITO") {
+      if (inverso === "CREDITO") {
         grouped[oid].entries.push(enrichedEntry);
         if (te.status === "PENDENTE") grouped[oid].totalPendente += te.value;
         else if (te.status === "PAGO") grouped[oid].totalPago += te.value;
-      } else if (te.type === "DEBITO") {
+      } else {
         grouped[oid].debitEntries.push(enrichedEntry);
         grouped[oid].totalDebitos += te.value;
       }
