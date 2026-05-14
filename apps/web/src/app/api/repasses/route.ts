@@ -30,6 +30,17 @@ export async function GET(request: NextRequest) {
     creditWhere.status = { in: ["PENDENTE", "PAGO"] };
   }
 
+  // Fix Paulo 14/05: entries com tag "revertidoEm" foram revertidas em 13/05
+  // mas ficaram PENDENTE inflando as abas "A Repassar PIX/TED" com lancamentos
+  // que "nao existem mais no sistema". Filtrar PENDENTE com revertidoEm.
+  // Mantem PAGO (legitimos do mes ou meses anteriores).
+  creditWhere.NOT = {
+    AND: [
+      { status: "PENDENTE" },
+      { notes: { contains: "revertidoEm" } },
+    ],
+  };
+
   if (month && /^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split("-").map(Number);
     const monthStart = new Date(y, m - 1, 1);
@@ -246,6 +257,15 @@ export async function GET(request: NextRequest) {
       ];
     }
   }
+  // Fix Paulo 14/05: debitos com tag "revertidoEm" foram revertidos em 13/05.
+  // Filtrar PENDENTE com revertidoEm das abas A Repassar PIX/TED.
+  debitWhere.NOT = {
+    AND: [
+      { status: "PENDENTE" },
+      { notes: { contains: "revertidoEm" } },
+    ],
+  };
+
   const debitEntries = await prisma.ownerEntry.findMany({
     where: debitWhere,
     include: { owner: { select: { id: true, name: true } } },
