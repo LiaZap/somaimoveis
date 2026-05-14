@@ -335,17 +335,19 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // Fix Leo 13/05: o billing pode ja ter criado OwnerEntry equivalente para
-    // este TenantEntry destination=PROPRIETARIO. Se sim, pular pra evitar
-    // duplicar na aba "Repassar PIX/TED".
-    // Match por owner + categoria + valor + dueDate.
+    // Fix Leo 13/05 + 14/05: dedup baseado em categoria + dueDate + contrato,
+    // NAO por valor. Splits de co-owners geram OwnerEntries com valores
+    // diferentes da TenantEntry original. Antes o dedup falhava nesses casos
+    // gerando duplicacao no extrato.
     const allOwnerEntriesByKey = new Set<string>();
     for (const oe of entries) {
-      const k = `${oe.ownerId}|${(oe.category||"").toUpperCase()}|${oe.value}|${(oe.dueDate ? new Date(oe.dueDate).toISOString().slice(0,10) : "")}`;
+      if (!oe.contractId) continue;
+      const k = `${(oe.category||"").toUpperCase()}|${(oe.dueDate ? new Date(oe.dueDate).toISOString().slice(0,10) : "")}|${oe.contractId}`;
       allOwnerEntriesByKey.add(k);
     }
     for (const oe of debitEntries) {
-      const k = `${oe.ownerId}|${(oe.category||"").toUpperCase()}|${oe.value}|${(oe.dueDate ? new Date(oe.dueDate).toISOString().slice(0,10) : "")}`;
+      if (!oe.contractId) continue;
+      const k = `${(oe.category||"").toUpperCase()}|${(oe.dueDate ? new Date(oe.dueDate).toISOString().slice(0,10) : "")}|${oe.contractId}`;
       allOwnerEntriesByKey.add(k);
     }
 
@@ -386,8 +388,8 @@ export async function GET(request: NextRequest) {
         const valorProporcional = Math.round(te.value * os.share * 100) / 100;
         if (valorProporcional <= 0) continue;
 
-        // Skip se ja existe OwnerEntry equivalente (criado pelo billing) PARA ESTE OWNER
-        const dupKey = `${oid}|${(te.category||"").toUpperCase()}|${valorProporcional}|${(te.dueDate ? new Date(te.dueDate).toISOString().slice(0,10) : "")}`;
+        // Dedup por categoria + dueDate + contrato (sem valor, por causa do split)
+        const dupKey = `${(te.category||"").toUpperCase()}|${(te.dueDate ? new Date(te.dueDate).toISOString().slice(0,10) : "")}|${contract.id}`;
         if (allOwnerEntriesByKey.has(dupKey)) continue;
 
         if (!grouped[oid]) {

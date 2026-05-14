@@ -149,17 +149,23 @@ export async function buildDemonstrativo(
   });
 
   // Converter TenantEntries em pseudo-OwnerEntries (com inversão de tipo)
-  // e mesclar com entries reais (dedup por value+categoria+dueDate)
-  const ownerEntryKeys = new Set<string>();
+  // Dedup mais robusto: se o owner ja tem OwnerEntries da mesma categoria,
+  // dueDate e contractId, NAO incluir o TenantEntry (independente do valor
+  // - porque splits podem dar valores diferentes).
+  // Ex: TenantEntry IPTU R$ 416,66 dest=PROPRIETARIO + OwnerEntry IPTU
+  // R$ 138,96 (proporcional Carla 33,35%) -> NAO duplicar.
+  const ownerEntryCategoryDateContract = new Set<string>();
   for (const e of entries) {
-    const k = `${(e.category||"").toUpperCase()}|${e.value}|${(e.dueDate ? e.dueDate.toISOString().slice(0,10) : "")}`;
-    ownerEntryKeys.add(k);
+    if (!e.contractId) continue;
+    const k = `${(e.category||"").toUpperCase()}|${(e.dueDate ? e.dueDate.toISOString().slice(0,10) : "")}|${e.contractId}`;
+    ownerEntryCategoryDateContract.add(k);
   }
   for (const te of tenantEntriesForOwner) {
     const ctr = te.tenant?.contracts?.[0];
     if (!ctr) continue;
-    const dupKey = `${(te.category||"").toUpperCase()}|${te.value}|${(te.dueDate ? te.dueDate.toISOString().slice(0,10) : "")}`;
-    if (ownerEntryKeys.has(dupKey)) continue;
+    // Dedup: se ja existe OwnerEntry da mesma categoria/dueDate/contrato, skip
+    const dupKey = `${(te.category||"").toUpperCase()}|${(te.dueDate ? te.dueDate.toISOString().slice(0,10) : "")}|${ctr.id}`;
+    if (ownerEntryCategoryDateContract.has(dupKey)) continue;
     const tipoInvertido = te.type === "DEBITO" ? "CREDITO" : "DEBITO";
     (entries as any[]).push({
       id: te.id,
