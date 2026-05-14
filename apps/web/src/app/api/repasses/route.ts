@@ -330,11 +330,29 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    // Fix Leo 13/05: o billing pode ja ter criado OwnerEntry equivalente para
+    // este TenantEntry destination=PROPRIETARIO. Se sim, pular pra evitar
+    // duplicar na aba "Repassar PIX/TED".
+    // Match por owner + categoria + valor + dueDate.
+    const allOwnerEntriesByKey = new Set<string>();
+    for (const oe of entries) {
+      const k = `${oe.ownerId}|${(oe.category||"").toUpperCase()}|${oe.value}|${(oe.dueDate ? new Date(oe.dueDate).toISOString().slice(0,10) : "")}`;
+      allOwnerEntriesByKey.add(k);
+    }
+    for (const oe of debitEntries) {
+      const k = `${oe.ownerId}|${(oe.category||"").toUpperCase()}|${oe.value}|${(oe.dueDate ? new Date(oe.dueDate).toISOString().slice(0,10) : "")}`;
+      allOwnerEntriesByKey.add(k);
+    }
+
     for (const te of tenantEntries) {
       // Resolver owner via contrato ativo do tenant
       const contract = te.tenant?.contracts?.[0];
       if (!contract) continue;
       const oid = contract.ownerId;
+
+      // Skip se ja existe OwnerEntry equivalente (criado pelo billing)
+      const dupKey = `${oid}|${(te.category||"").toUpperCase()}|${te.value}|${(te.dueDate ? new Date(te.dueDate).toISOString().slice(0,10) : "")}`;
+      if (allOwnerEntriesByKey.has(dupKey)) continue;
 
       // Se o grupo ainda nao existe, criar a partir do owner
       if (!grouped[oid]) {
