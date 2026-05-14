@@ -1658,15 +1658,13 @@ export default function RepassesPage() {
                               </div>
                             )}
 
-                            {/* Valor liquido */}
-                            {(group.totalDebitos ?? 0) > 0 && (
-                              <div className="px-4 py-2 border-t bg-muted/50 flex items-center justify-between">
-                                <span className="text-xs font-semibold">Valor Liquido</span>
-                                <span className="text-sm font-bold">
-                                  {formatCurrency(group.totalLiquido ?? group.totalPendente)}
-                                </span>
-                              </div>
-                            )}
+                            {/* Valor liquido - sempre mostrar embaixo */}
+                            <div className="px-4 py-2 border-t bg-muted/50 flex items-center justify-between">
+                              <span className="text-xs font-semibold">Valor Liquido</span>
+                              <span className="text-sm font-bold">
+                                {formatCurrency(group.totalLiquido ?? group.totalPendente)}
+                              </span>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -2262,15 +2260,13 @@ export default function RepassesPage() {
                               </div>
                             )}
 
-                            {/* Valor liquido */}
-                            {(group.totalDebitos ?? 0) > 0 && (
-                              <div className="px-6 py-2 border-t bg-muted/40 flex items-center justify-between">
-                                <span className="text-xs font-semibold">Valor Liquido do Repasse</span>
-                                <span className="text-sm font-bold">
-                                  {formatCurrency(group.totalLiquido ?? group.totalPendente)}
-                                </span>
-                              </div>
-                            )}
+                            {/* Valor liquido - sempre mostrar embaixo */}
+                            <div className="px-6 py-2 border-t bg-muted/40 flex items-center justify-between">
+                              <span className="text-xs font-semibold">Valor Liquido do Repasse</span>
+                              <span className="text-sm font-bold">
+                                {formatCurrency(group.totalLiquido ?? group.totalPendente)}
+                              </span>
+                            </div>
                           </div>
                         )}
                       </div>
