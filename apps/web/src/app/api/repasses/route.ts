@@ -194,52 +194,50 @@ export async function GET(request: NextRequest) {
     ownerId: { in: ownerIds },
   };
 
+  // Fix Leo 13/05/2026: debitos devem ser SO DO MES atual (referentes ao
+  // ciclo de repasse). PAGOs de meses anteriores ja foram processados em
+  // ciclos anteriores e nao devem ser mostrados de novo. PENDENTEs antigos
+  // tambem nao - se nao foram cobrados ate hoje, devem ser tratados via
+  // criacao de novo lançamento no mes atual. Sem essa restricao, debitos
+  // duplicados de meses anteriores poluiam o extrato (caso Antar com Desconto
+  // 04/2026 aparecendo no repasse de 05/2026 alem do Desconto 05/2026 real).
   if (status === "PAGO") {
-    // Aba "Nao Confirmados" / "Confirmados Banco": mostra TODOS os
-    // debitos do owner ate o final do mes selecionado (PAGO ja descontados +
-    // PENDENTE que serao descontados no proximo repasse). Sem isso, o
-    // admin nao via os REPAROs do Lucio que ainda nao tinham sido cobrados.
+    // Aba "Nao Confirmados" / "Confirmados Banco": mostra debitos do mes
+    // selecionado independente do status.
     debitWhere.status = { in: ["PENDENTE", "PAGO"] };
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [y, m] = month.split("-").map(Number);
-      // Inclui debitos com dueDate ate o final do mes (PAGO do mes + PENDENTE
-      // do mes ou anteriores + sem dueDate). m e 1-indexed, então new Date(y, m, 1)
-      // ja retorna o primeiro dia do mes seguinte.
+      const monthStart = new Date(y, m - 1, 1);
+      const monthEnd = new Date(y, m, 1);
       debitWhere.OR = [
-        { dueDate: { lt: new Date(y, m, 1) } },
-        { dueDate: null },
+        { dueDate: { gte: monthStart, lt: monthEnd } },
+        // Sem dueDate: lançamento avulso, mostra so se PAGO no mes
+        { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lt: monthEnd } }] },
       ];
     }
   } else if (status === "PENDENTE") {
     // Aba PIX/TED: debitos PENDENTES a descontar do proximo repasse.
-    // Inclui mes atual + anteriores (carry-forward) + sem dueDate.
+    // So do mes selecionado (sem carry-forward).
     debitWhere.status = "PENDENTE";
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [y, m] = month.split("-").map(Number);
+      const monthStart = new Date(y, m - 1, 1);
+      const monthEnd = new Date(y, m, 1);
       debitWhere.OR = [
-        { dueDate: { lt: new Date(y, m, 1) } },
+        { dueDate: { gte: monthStart, lt: monthEnd } },
         { dueDate: null },
       ];
     }
   } else {
-    // status=all (aba "Todos"): mostra debitos do mes selecionado
-    // independente do status (PENDENTE ou PAGO) — pra totalLiquido
-    // refletir o REAL liquido (com descontos PAGOs aplicados).
-    // Sem isso, Julio Cesar aparecia com liquido R$ 5.594 mesmo apos
-    // DARF + condominios virarem PAGO, em vez do R$ 4.678 real.
+    // status=all (aba "Todos"): debitos do mes selecionado (qualquer status).
     debitWhere.status = { in: ["PENDENTE", "PAGO"] };
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [y, m] = month.split("-").map(Number);
-      // monthEnd = primeiro dia do mes SEGUINTE.
-      // month "2026-05" → m=5, JS Date espera 0-indexed,
-      // entao new Date(2026, 5, 1) = junho 1 (correto).
-      // BUG anterior: usava new Date(y, m+1, 1) = julho 1 (off-by-one),
-      // o que incluia debitos de junho indevidamente no totalDebitos
-      // de maio (caso Marlene: 3 reparos parcelados — 1 de abril,
-      // 1 de maio e 1 de junho eram todos somados).
+      const monthStart = new Date(y, m - 1, 1);
+      const monthEnd = new Date(y, m, 1);
       debitWhere.OR = [
-        { dueDate: { lt: new Date(y, m, 1) } }, // mes atual e anteriores
-        { dueDate: null },
+        { dueDate: { gte: monthStart, lt: monthEnd } },
+        { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lt: monthEnd } }] },
       ];
     }
   }
