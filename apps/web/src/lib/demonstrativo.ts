@@ -117,6 +117,75 @@ export async function buildDemonstrativo(
     orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
   });
 
+  // Fix Leo 13/05: TenantEntry destination=PROPRIETARIO afeta o demonstrativo
+  // do owner. Inverte tipo (DEBITO inquilino -> CREDITO owner, e vice-versa).
+  // Sem isso, IPTU pago pelo inquilino nao aparecia no demonstrativo do owner.
+  const tenantEntriesForOwner = await prisma.tenantEntry.findMany({
+    where: {
+      destination: "PROPRIETARIO",
+      status: { not: "CANCELADO" },
+      OR: [
+        { dueDate: { gte: monthStart, lte: monthEnd } },
+        { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lte: monthEnd } }] },
+      ],
+      tenant: {
+        contracts: {
+          some: { ownerId, status: "ATIVO" },
+        },
+      },
+    },
+    include: {
+      tenant: {
+        select: {
+          id: true, name: true,
+          contracts: {
+            where: { ownerId, status: "ATIVO" },
+            select: { id: true, ownerId: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+
+  // Converter TenantEntries em pseudo-OwnerEntries (com inversão de tipo)
+  // e mesclar com entries reais (dedup por value+categoria+dueDate)
+  const ownerEntryKeys = new Set<string>();
+  for (const e of entries) {
+    const k = `${(e.category||"").toUpperCase()}|${e.value}|${(e.dueDate ? e.dueDate.toISOString().slice(0,10) : "")}`;
+    ownerEntryKeys.add(k);
+  }
+  for (const te of tenantEntriesForOwner) {
+    const ctr = te.tenant?.contracts?.[0];
+    if (!ctr) continue;
+    const dupKey = `${(te.category||"").toUpperCase()}|${te.value}|${(te.dueDate ? te.dueDate.toISOString().slice(0,10) : "")}`;
+    if (ownerEntryKeys.has(dupKey)) continue;
+    const tipoInvertido = te.type === "DEBITO" ? "CREDITO" : "DEBITO";
+    (entries as any[]).push({
+      id: te.id,
+      type: tipoInvertido,
+      category: te.category,
+      description: te.description,
+      value: te.value,
+      dueDate: te.dueDate,
+      paidAt: te.paidAt,
+      status: te.status,
+      ownerId,
+      contractId: ctr.id,
+      notes: te.notes,
+      installmentNumber: te.installmentNumber,
+      installmentTotal: te.installmentTotal,
+      parentEntryId: te.parentEntryId,
+      isRecurring: te.isRecurring,
+      recurringDay: te.recurringDay,
+      destination: te.destination,
+      createdAt: te.createdAt,
+      updatedAt: te.updatedAt,
+      createdById: te.createdById,
+      _fromTenantEntry: true,
+    });
+  }
+
   const contractIds = Array.from(
     new Set(entries.map((e) => e.contractId).filter((id): id is string => !!id))
   );

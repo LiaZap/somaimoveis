@@ -1895,6 +1895,9 @@ export default function RepassesPage() {
                               let sharePercent: number | undefined;
                               for (const e of group.entries) {
                                 if (e.status === "CANCELADO") continue;
+                                // Fix Leo 13/05: summary "= X" reflete o que JA FOI PAGO (bate com demonstrativo)
+                                // PENDENTEs aparecem na lista mas nao no total resumido.
+                                if (e.status === "PENDENTE") continue;
                                 creditsByCategory[e.category] = (creditsByCategory[e.category] || 0) + e.value;
                                 // Extrair taxa adm do notes dos entries REPASSE/GARANTIA
                                 if (["REPASSE", "GARANTIA"].includes(e.category) && e.notes) {
