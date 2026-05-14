@@ -55,9 +55,21 @@ export async function POST(request: NextRequest) {
     },
     include: {
       owner: { select: { id: true, name: true } },
-      contract: { select: { code: true, intermediationFee: true } },
     },
   });
+
+  // Pre-load contracts para resolver code
+  const contractIds = [...new Set(repasses.map((r) => r.contractId).filter(Boolean))] as string[];
+  const contractsMap = new Map<string, { code: string; intermediationFee: number | null }>();
+  if (contractIds.length > 0) {
+    const contracts = await prisma.contract.findMany({
+      where: { id: { in: contractIds } },
+      select: { id: true, code: true, intermediationFee: true },
+    });
+    for (const c of contracts) {
+      contractsMap.set(c.id, { code: c.code, intermediationFee: c.intermediationFee });
+    }
+  }
 
   // Para cada repasse, verificar se há intermediação no mês E admin > 0
   const corrected: Array<Record<string, unknown>> = [];
@@ -84,7 +96,7 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Verificar se tem intermediação no mês (debit entry INTERMEDIACAO)
+      // CENÁRIO 1: Verificar se tem intermediação no mês (debit entry INTERMEDIACAO)
       const intermed = await prisma.ownerEntry.findFirst({
         where: {
           ownerId: r.ownerId,
@@ -98,41 +110,109 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      if (!intermed || intermed.value <= 0) {
-        // Não tem intermediação - admin pode ficar
+      // CENÁRIO 2: Tem desconto de aluguel no contrato? Admin deve ser sobre (aluguel - desconto)
+      // Pegar descontos do MESMO contrato no mês
+      const descontosContrato = r.contractId
+        ? await prisma.ownerEntry.findMany({
+            where: {
+              ownerId: r.ownerId,
+              contractId: r.contractId,
+              type: "DEBITO",
+              status: { not: "CANCELADO" },
+              OR: [
+                { category: "ALUGUEL" },
+                { category: "DESCONTO" },
+              ],
+              AND: [{
+                OR: [
+                  { dueDate: { gte: monthStart, lt: monthEnd } },
+                  { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lt: monthEnd } }] },
+                ],
+              }],
+            },
+          })
+        : [];
+
+      // Deduplicar: se vários entries idênticos (mesmo valor+desc) → considerar como 1 só
+      const descontosUnicos = new Map<string, number>();
+      for (const d of descontosContrato) {
+        const key = `${d.value}|${(d.description || "").trim()}`;
+        if (!descontosUnicos.has(key)) {
+          descontosUnicos.set(key, d.value);
+        }
+      }
+      const totalDesconto = Array.from(descontosUnicos.values()).reduce((s, v) => s + v, 0);
+
+      const temIntermediacao = intermed && intermed.value > 0;
+      const temDesconto = totalDesconto > 0;
+
+      if (!temIntermediacao && !temDesconto) {
+        // Nada para corrigir
         continue;
       }
 
-      // ENCONTROU PROBLEMA: tem intermediação E admin > 0
-      // Corrigir:
+      // Calcular nova admin
+      const aluguelBruto = r.value + adminFeeValue; // valor original antes do admin
+      let adminCorreta = 0;
+      let cenario = "";
+      let adminWaivedFinal = false;
+
+      if (temIntermediacao) {
+        // Regra Léo: tem intermediação → admin = 0
+        adminCorreta = 0;
+        adminWaivedFinal = true;
+        cenario = "INTERMEDIACAO_ZERA_ADMIN";
+      } else if (temDesconto) {
+        // Regra Léo: admin = (aluguel - desconto) × pct
+        const baseAdmin = Math.max(0, aluguelBruto - totalDesconto);
+        adminCorreta = Math.round(baseAdmin * adminFeePercent / 100 * 100) / 100;
+        cenario = "DESCONTO_AJUSTA_BASE_ADMIN";
+      }
+
+      const adminIndevida = Math.round((adminFeeValue - adminCorreta) * 100) / 100;
+      if (Math.abs(adminIndevida) < 0.01) {
+        // Admin já está correta
+        continue;
+      }
+
       const valorOriginal = r.value;
-      const valorCorrigido = Math.round((valorOriginal + adminFeeValue) * 100) / 100;
+      const valorCorrigido = Math.round((valorOriginal + adminIndevida) * 100) / 100;
 
       const newNotes = {
         ...notes,
-        adminFeeValue: 0,
-        adminFee: 0,
-        adminWaived: true,
-        adminWaivedReason: `Auto-corrigido em 2026-05-14: admin estava sendo cobrada com intermediação (regra Léo)`,
+        adminFeeValue: adminCorreta,
+        adminFee: adminCorreta,
+        adminWaived: adminWaivedFinal,
+        adminWaivedReason: temIntermediacao
+          ? `Auto-corrigido em 2026-05-14: admin zerada (regra Léo: intermediação no mês)`
+          : `Auto-corrigido em 2026-05-14: admin recalculada sobre (aluguel - desconto) (regra Léo)`,
         bankConfirmed: false,
         bankConfirmedAt: null,
-        auditTag: "CORRIGIDO_ADMIN_INDEVIDA_2026-05-14",
+        auditTag: `CORRIGIDO_${cenario}_2026-05-14`,
         valorAntesCorrecao: valorOriginal,
         adminFeeValueAntesCorrecao: adminFeeValue,
         adminFeePercentAntesCorrecao: adminFeePercent,
+        descontoTotal: totalDesconto,
+      };
+
+      const contractInfo = r.contractId ? contractsMap.get(r.contractId) : null;
+      const logItem = {
+        owner: r.owner.name,
+        contract: contractInfo?.code,
+        repasseId: r.id,
+        cenario,
+        aluguelBruto,
+        valorOriginal,
+        valorCorrigido,
+        adminAntes: adminFeeValue,
+        adminCorreta,
+        adminIndevida,
+        intermediacao: intermed?.value || 0,
+        descontoTotal: totalDesconto,
       };
 
       if (dryRun) {
-        corrected.push({
-          dryRun: true,
-          owner: r.owner.name,
-          contract: r.contract?.code,
-          repasseId: r.id,
-          valorOriginal,
-          valorCorrigido,
-          adminIndevida: adminFeeValue,
-          intermediacao: intermed.value,
-        });
+        corrected.push({ dryRun: true, ...logItem });
       } else {
         await prisma.ownerEntry.update({
           where: { id: r.id },
@@ -141,18 +221,10 @@ export async function POST(request: NextRequest) {
             notes: JSON.stringify(newNotes),
           },
         });
-        corrected.push({
-          owner: r.owner.name,
-          contract: r.contract?.code,
-          repasseId: r.id,
-          valorOriginal,
-          valorCorrigido,
-          adminIndevida: adminFeeValue,
-          intermediacao: intermed.value,
-        });
+        corrected.push(logItem);
       }
 
-      totalAdminCorrigido += adminFeeValue;
+      totalAdminCorrigido += adminIndevida;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       errors.push({ owner: r.owner.name, repasseId: r.id, error: errMsg });
