@@ -316,15 +316,13 @@ export async function POST(request: NextRequest) {
         let adminWaived = false;
         let adminWaivedReason = "";
 
-        // REGRA 1: 1o mes do contrato com intermediacao → isentar taxa adm
-        if (
-          intermediationParcelaTeorica > 0 &&
-          intermediationMonthNumber === 1 &&
-          adminFeeBase > 0
-        ) {
+        // REGRA LEO 13/05/2026: SEMPRE que tem intermediacao no mes, admin = 0
+        // "a intermediacao sempre vai ser sobre o valor completo e quando tiver
+        // isso nao precisa ter administracao" - Leo Constantin
+        if (intermediationParcelaTeorica > 0 && adminFeeBase > 0) {
           adminFeeBase = 0;
           adminWaived = true;
-          adminWaivedReason = `Taxa de administracao isenta no 1o mes do contrato (mes da intermediacao)`;
+          adminWaivedReason = `Taxa admin isenta — contrato com intermediacao no mes ${intermediationMonthNumber} (regra Leo: intermediacao + admin nao acumulam)`;
         }
 
         // Quanto sobra apos cobrar taxa adm (que ja pode ter sido isentada acima)
