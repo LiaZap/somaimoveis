@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
       property: {
         select: {
           id: true,
-          propertyOwners: {
+          ownerShares: {
             select: {
               ownerId: true,
               percentage: true,
