@@ -621,8 +621,12 @@ export default function RepassesPage() {
   }
 
   function selectAllPending() {
+    // Fix 13/05/2026: seleciona apenas entries dos owners atualmente visiveis
+    // (filteredGroups). Antes pegava de TODOS os groups, incluindo escondidos
+    // pela aba/busca, causando confusao no admin que via R$ 310 mil selecionado
+    // sem entender que estava pegando de paginas/abas ocultas.
     const targetStatus = isPagos ? "PAGO" : "PENDENTE";
-    const allIds = groups.flatMap((g) =>
+    const allIds = filteredGroups.flatMap((g) =>
       g.entries
         .filter((e) => e.status === targetStatus && isEntryReleasable(e, g.entries))
         .map((e) => e.id)
@@ -1037,7 +1041,7 @@ export default function RepassesPage() {
     }
   }
 
-  const selectedTotal = groups.reduce((sum, g) => {
+  const selectedTotal = filteredGroups.reduce((sum, g) => {
     const selectedCredits = g.entries
       .filter((e) => selectedEntries.has(e.id))
       .reduce((s, e) => s + e.value, 0);

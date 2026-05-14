@@ -231,8 +231,43 @@ export async function POST(request: NextRequest) {
             ],
           },
         });
-        const discountEntries = tenantEntries.filter(e => e.type === "CREDITO");
-        const chargeEntries = tenantEntries.filter(e => e.type === "DEBITO");
+        // Fix Leo 13/05/2026: caso bilateral - OwnerEntry destination=LOCATARIO
+        // afeta o boleto do inquilino. Conceito: "debito pro proprietario por
+        // desconto, credito pro inquilino".
+        // Ex: Owner DEBITO desconto destination=LOCATARIO -> tenant CREDITO
+        //     (inquilino paga menos no boleto)
+        // Ex: Owner CREDITO destination=LOCATARIO -> tenant DEBITO (paga mais)
+        const ownerEntriesForTenant = await prisma.ownerEntry.findMany({
+          where: {
+            ownerId: contract.ownerId,
+            destination: "LOCATARIO",
+            status: "PENDENTE",
+            OR: [
+              {
+                dueDate: {
+                  gte: new Date(targetYear, targetMonth, 1),
+                  lt: new Date(targetYear, targetMonth + 1, 1),
+                },
+              },
+              { dueDate: null },
+            ],
+          },
+        });
+        // Inverter tipo: Owner DEBITO -> Tenant CREDITO; Owner CREDITO -> Tenant DEBITO
+        const ownerToTenantInverted = ownerEntriesForTenant.map(oe => ({
+          ...oe,
+          type: oe.type === "DEBITO" ? "CREDITO" : "DEBITO",
+          _fromOwnerEntry: oe.id,
+        }));
+
+        const discountEntries = [
+          ...tenantEntries.filter(e => e.type === "CREDITO"),
+          ...ownerToTenantInverted.filter(e => e.type === "CREDITO"),
+        ];
+        const chargeEntries = [
+          ...tenantEntries.filter(e => e.type === "DEBITO"),
+          ...ownerToTenantInverted.filter(e => e.type === "DEBITO"),
+        ];
         const totalCredits = discountEntries.reduce((sum, e) => sum + e.value, 0);
         // Fix Bug 2: se ja temos iptuMonthly (calculado de property.iptuValue/12),
         // ignoramos TenantEntry IPTU pra nao cobrar 2x. Idem condomínio.
