@@ -293,6 +293,97 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Bug fix 13/05/2026: lancamentos do locatario com destination=PROPRIETARIO
+  // (TenantEntry) tambem afetam o repasse mas a API so consultava OwnerEntry.
+  // Caso Marcia Trojan: 12 parcelas R$ 250 + IPTUs marcados pra owner que nao
+  // apareciam em /repasses. Agora puxa TenantEntry com destination=PROPRIETARIO,
+  // resolve tenant -> contrato ATIVO -> owner, e mescla nos grupos.
+  try {
+    const tenantWhere: Record<string, unknown> = {
+      destination: "PROPRIETARIO",
+      status: { not: "CANCELADO" },
+    };
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [y, m] = month.split("-").map(Number);
+      const monthStart = new Date(y, m - 1, 1);
+      const monthEnd = new Date(y, m, 1);
+      const dueDateMin = new Date(monthStart);
+      dueDateMin.setDate(dueDateMin.getDate() - 90);
+      tenantWhere.OR = [
+        { dueDate: { gte: monthStart, lt: monthEnd } },
+        {
+          AND: [
+            { paidAt: { gte: monthStart, lt: monthEnd } },
+            { dueDate: { gte: dueDateMin, lt: monthStart } },
+          ],
+        },
+        // DEBITO PENDENTE de mes anterior (carry-forward 90 dias)
+        {
+          AND: [
+            { type: "DEBITO" },
+            { status: "PENDENTE" },
+            { dueDate: { gte: dueDateMin, lt: monthStart } },
+          ],
+        },
+      ];
+    }
+    const tenantEntries = await prisma.tenantEntry.findMany({
+      where: tenantWhere,
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            name: true,
+            contracts: {
+              where: { status: "ATIVO" },
+              select: { id: true, ownerId: true, owner: { select: ownerSelect } },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+
+    for (const te of tenantEntries) {
+      // Resolver owner via contrato ativo do tenant
+      const contract = te.tenant?.contracts?.[0];
+      if (!contract) continue;
+      const oid = contract.ownerId;
+
+      // Se o grupo ainda nao existe, criar a partir do owner
+      if (!grouped[oid]) {
+        grouped[oid] = {
+          owner: contract.owner,
+          entries: [],
+          debitEntries: [],
+          totalPendente: 0,
+          totalPago: 0,
+          totalDebitos: 0,
+          totalLiquido: 0,
+        };
+      }
+
+      // CREDITO destinado ao proprietario soma como entry; DEBITO entra como debito.
+      const enrichedEntry = {
+        ...te,
+        owner: contract.owner,
+        ownerId: oid,
+        contractId: contract.id,
+        sourceType: "tenant_entry_proprietario", // tag pra UI
+      } as any;
+      if (te.type === "CREDITO") {
+        grouped[oid].entries.push(enrichedEntry);
+        if (te.status === "PENDENTE") grouped[oid].totalPendente += te.value;
+        else if (te.status === "PAGO") grouped[oid].totalPago += te.value;
+      } else if (te.type === "DEBITO") {
+        grouped[oid].debitEntries.push(enrichedEntry);
+        grouped[oid].totalDebitos += te.value;
+      }
+    }
+  } catch (err) {
+    console.error("[Repasses] Erro ao buscar TenantEntry destination=PROPRIETARIO:", err);
+  }
+
   // Calcular valor liquido (repasse - debitos)
   // Detectar co-proprietários: entries com "(%)" na descrição
   const result = Object.values(grouped)
