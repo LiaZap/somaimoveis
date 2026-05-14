@@ -22,24 +22,23 @@ export async function GET(request: NextRequest) {
     type: "CREDITO",
   };
 
+  // Fix Leo 13/05: nunca incluir CANCELADO na lista (FORTE tinha 14 entries
+  // canceladas aparecendo na aba "Todos").
   if (status && status !== "all") {
     creditWhere.status = status;
+  } else {
+    creditWhere.status = { in: ["PENDENTE", "PAGO"] };
   }
 
   if (month && /^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split("-").map(Number);
     const monthStart = new Date(y, m - 1, 1);
     const monthEnd = new Date(y, m, 1);
-    const dueDateMin = new Date(monthStart);
-    dueDateMin.setDate(dueDateMin.getDate() - 90);
+    // Sem carry-forward: cada lançamento fica no seu mes certo
     creditWhere.OR = [
       { dueDate: { gte: monthStart, lt: monthEnd } },
-      {
-        AND: [
-          { paidAt: { gte: monthStart, lt: monthEnd } },
-          { dueDate: { gte: dueDateMin, lt: monthStart } },
-        ],
-      },
+      // Sem dueDate (avulsos): mostra so se paidAt no mes
+      { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lt: monthEnd } }] },
     ];
   }
 
