@@ -325,6 +325,15 @@ export async function GET(request: NextRequest) {
     const tenantWhere: Record<string, unknown> = {
       destination: "PROPRIETARIO",
       status: { not: "CANCELADO" },
+      // Fix Paulo 14/05: TenantEntries com tag 'revertidoEm' foram revertidas
+      // mas continuam aparecendo virtualizadas no repasse. Filtrar PENDENTE.
+      // Mantem PAGO (legitimos do mes ja confirmados).
+      NOT: {
+        AND: [
+          { status: "PENDENTE" },
+          { notes: { contains: "revertidoEm" } },
+        ],
+      },
     };
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [y, m] = month.split("-").map(Number);
