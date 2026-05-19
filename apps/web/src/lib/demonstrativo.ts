@@ -77,16 +77,21 @@ export async function buildDemonstrativo(
     };
   }
 
-  // Fix Paulo 14/05/2026: demonstrativo deve mostrar APENAS entries com
-  // paidAt no mes selecionado (ciclo financeiro real do owner). Remove
-  // carry-forward de dueDate em meses anteriores. Aluguel de abril pago
-  // em maio aparece (paidAt=05) mas itens nao pagos ou de outros meses
-  // sem paidAt em maio sao excluidos.
+  // Fix Paulo 14/05/2026 (v2): "cada um tem que ficar no seu mes".
+  // Demonstrativo filtra por dueDate (mes de competencia) no mes selecionado.
+  // IPTU/aluguel ref 04/2026 NAO aparece no demonstrativo de 05/2026 mesmo
+  // que paidAt seja em maio. Cada item fica no seu proprio mes.
+  // Excecao: items sem dueDate (avulsos) usam paidAt como fallback.
   const entries = await prisma.ownerEntry.findMany({
     where: {
       ownerId,
       status: { not: "CANCELADO" },
-      paidAt: { gte: monthStart, lte: monthEnd },
+      OR: [
+        // Entries com dueDate no mes selecionado (competencia)
+        { dueDate: { gte: monthStart, lte: monthEnd } },
+        // Entries sem dueDate (avulsos): usa paidAt no mes
+        { AND: [{ dueDate: null }, { paidAt: { gte: monthStart, lte: monthEnd } }] },
+      ],
     },
     orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
   });
@@ -583,7 +588,18 @@ export async function buildDemonstrativo(
       // Quando contrato tem intermediacao no mes, admin = 0 (regra Leo).
       // Demonstrativo precisa bater EXATO com o repasse.
       const adminWaived = noteData?.adminWaived === true || noteData?.adminFeeValue === 0;
-      const adminFeeRecalc = adminWaived ? 0 : Math.round((brutoLiquido * adminFeePercent / 100) * 100) / 100;
+      // Fix Paulo 19/05/2026: usar notes.adminFeeValue como FONTE DA VERDADE
+      // quando existir. Antes recalculava 10% × (bruto - desconto), gerando
+      // diferenca de R$ 7,30 vs a pagina de Repasses (caso Andre Etges).
+      // Regras de admin variam (Kampf, Ernani, Antar etc) e o calculo correto
+      // ja esta persistido em notes.adminFeeValue durante o ajuste manual.
+      // Aplica shareRatio porque adminFeeValue armazenado e' do contrato inteiro.
+      const adminFromNotes = typeof noteData?.adminFeeValue === "number" ? noteData.adminFeeValue : null;
+      const adminFeeRecalc = adminWaived
+        ? 0
+        : (adminFromNotes !== null && adminFromNotes >= 0
+            ? Math.round(adminFromNotes * shareRatio * 100) / 100
+            : Math.round((brutoLiquido * adminFeePercent / 100) * 100) / 100);
 
       let irrfRecalc = 0;
       const irrfOriginal = noteData?.irrfValue || 0;

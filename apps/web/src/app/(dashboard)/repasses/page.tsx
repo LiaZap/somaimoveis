@@ -1464,18 +1464,27 @@ export default function RepassesPage() {
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
                               <div className="text-right">
-                                {group.totalPendente > 0 && (
-                                  <p className="text-sm font-bold text-yellow-600">
-                                    {formatCurrency(group.totalLiquido ?? group.totalPendente)}
-                                  </p>
-                                )}
+                                {/* Fix Paulo 19/05/2026: mobile tambem mostra LIQUIDO real
+                                    pra bater com o detalhe expandido. Mantem chip pequeno
+                                    de "Debitos" pra contexto. */}
+                                {(() => {
+                                  const liq = group.totalLiquido ?? (group.totalPendente + group.totalPago);
+                                  const cor = liq < 0 ? "text-red-600"
+                                    : group.totalPendente > 0 ? "text-yellow-600"
+                                    : "text-emerald-600";
+                                  return (
+                                    <p className={cn("text-sm font-bold", cor)}>
+                                      {formatCurrency(liq)}
+                                    </p>
+                                  );
+                                })()}
                                 {(group.totalDebitos ?? 0) > 0 && (
                                   <p className="text-[11px] text-red-500">
                                     Debitos: -{formatCurrency(group.totalDebitos!)}
                                   </p>
                                 )}
-                                {group.totalPago > 0 && (
-                                  <p className="text-xs text-emerald-600">
+                                {group.totalPago > 0 && group.totalPendente > 0 && (
+                                  <p className="text-[11px] text-emerald-600">
                                     Pago: {formatCurrency(group.totalPago)}
                                   </p>
                                 )}
@@ -1769,24 +1778,27 @@ export default function RepassesPage() {
                               </Badge>
                             )}
                             {(() => {
-                              const liq = group.totalLiquido ?? group.totalPendente;
+                              // Fix Paulo 19/05/2026: chip principal SEMPRE mostra LIQUIDO
+                              // (totalPendente + totalPago - totalDebitos). Tinha caso de
+                              // Alvaro Erico onde a chip mostrava R$ 5.304,20 (bruto) mas
+                              // ao expandir o liquido era R$ 970,86. Agora bate exato.
+                              if ((group.totalPago + group.totalPendente) === 0) return null;
+                              const liq = group.totalLiquido ?? (group.totalPendente + group.totalPago);
                               if (liq < 0) return (
                                 <Badge className="bg-red-600 text-white border-red-700 text-xs font-bold">
                                   Negativado: {formatCurrency(liq)}
                                 </Badge>
                               );
-                              if (group.totalPendente > 0) return (
-                                <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200 text-xs font-bold">
-                                  Líq: {formatCurrency(liq)}
+                              // Misto (tem pendente): amarelo. Tudo pago: verde.
+                              const cor = group.totalPendente > 0
+                                ? "bg-yellow-100 text-yellow-700 border-yellow-200"
+                                : "bg-emerald-100 text-emerald-700 border-emerald-200";
+                              return (
+                                <Badge className={cn(cor, "text-xs font-bold")}>
+                                  {formatCurrency(liq)}
                                 </Badge>
                               );
-                              return null;
                             })()}
-                            {group.totalPago > 0 && (
-                              <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">
-                                {formatCurrency(group.totalPago)}
-                              </Badge>
-                            )}
                           </div>
                         </div>
 
