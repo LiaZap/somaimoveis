@@ -42,6 +42,12 @@ export async function PUT(
     if (body.status !== undefined) data.status = body.status;
     if (body.notes !== undefined) data.notes = body.notes;
     if (body.destination !== undefined) data.destination = body.destination;
+    // Fix Paulo 19/05/2026: permitir vincular contractId/propertyId em entries
+    // legadas. Era critico pra dedupe TenantEntry x OwnerEntry no demonstrativo
+    // (TenantEntry destination=PROPRIETARIO sem contractId nao deduplicava com
+    // OwnerEntry (50%) — IPTU aparecia em dobro para coproprietarios).
+    if (body.contractId !== undefined) data.contractId = body.contractId || null;
+    if (body.propertyId !== undefined) data.propertyId = body.propertyId || null;
     if (body.isRecurring !== undefined) data.isRecurring = body.isRecurring;
     if (body.recurringDay !== undefined) data.recurringDay = body.recurringDay ? parseInt(body.recurringDay) : null;
     if (body.value !== undefined) data.value = parseFloat(body.value as string);
