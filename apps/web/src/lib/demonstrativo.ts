@@ -139,19 +139,65 @@ export async function buildDemonstrativo(
     const k = `${(e.category||"").toUpperCase()}|${(e.dueDate ? e.dueDate.toISOString().slice(0,10) : "")}|${e.contractId}`;
     ownerEntryCategoryDateContract.add(k);
   }
+  // Fix Paulo 19/05/2026: aplicar split virtual dos TenantEntries dest=PROPRIETARIO
+  // identico ao /api/repasses. Antes o demonstrativo somava o TE cheio (ex: IPTU
+  // R$ 194,42) mesmo quando o owner era coproprietario 50% (deveria receber R$ 97,21).
+  // Causava PDF != pagina em ~20 owners coproprietarios. Agora o demonstrativo
+  // detecta o share do owner atual via REPASSEs do contrato e aplica proporcional.
+  // Pre-carrega REPASSEs por contrato pra evitar N+1 query
+  const allCtrIds = [...new Set(
+    tenantEntriesForOwner
+      .map(te => te.tenant?.contracts?.[0]?.id)
+      .filter((x): x is string => !!x)
+  )];
+  const repassesPorContrato = new Map<string, Array<{ ownerId: string; description: string }>>();
+  if (allCtrIds.length > 0) {
+    const repassesAll = await prisma.ownerEntry.findMany({
+      where: {
+        contractId: { in: allCtrIds },
+        category: { in: ["REPASSE", "GARANTIA"] },
+        type: "CREDITO",
+        status: { not: "CANCELADO" },
+      },
+      select: { ownerId: true, description: true, contractId: true },
+    });
+    for (const r of repassesAll) {
+      if (!r.contractId) continue;
+      if (!repassesPorContrato.has(r.contractId)) repassesPorContrato.set(r.contractId, []);
+      repassesPorContrato.get(r.contractId)!.push({ ownerId: r.ownerId, description: r.description || "" });
+    }
+  }
+
   for (const te of tenantEntriesForOwner) {
     const ctr = te.tenant?.contracts?.[0];
     if (!ctr) continue;
     // Dedup: se ja existe OwnerEntry da mesma categoria/dueDate/contrato, skip
     const dupKey = `${(te.category||"").toUpperCase()}|${(te.dueDate ? te.dueDate.toISOString().slice(0,10) : "")}|${ctr.id}`;
     if (ownerEntryCategoryDateContract.has(dupKey)) continue;
+
+    // Detecta share do owner atual via REPASSE com "(X%)" na descricao
+    let shareDoOwner = 1; // fallback: owner principal sem coproprietario = 100%
+    const repassesDoCtr = repassesPorContrato.get(ctr.id) || [];
+    const repasseDoOwner = repassesDoCtr.find(r => r.ownerId === ownerId);
+    if (repasseDoOwner) {
+      const m = repasseDoOwner.description.match(/\((\d+(?:[.,]\d+)?)%\)/);
+      if (m) {
+        const pct = parseFloat(m[1].replace(",", "."));
+        if (Number.isFinite(pct) && pct > 0 && pct <= 100) shareDoOwner = pct / 100;
+      }
+    }
+    const valorProporcional = Math.round(te.value * shareDoOwner * 100) / 100;
+    if (valorProporcional <= 0) continue;
+
     const tipoInvertido = te.type === "DEBITO" ? "CREDITO" : "DEBITO";
     (entries as any[]).push({
       id: te.id,
       type: tipoInvertido,
       category: te.category,
-      description: te.description,
-      value: te.value,
+      description: shareDoOwner < 1
+        ? `${te.description} (${(shareDoOwner * 100).toFixed(2)}%)`
+        : te.description,
+      value: valorProporcional,
       dueDate: te.dueDate,
       paidAt: te.paidAt,
       status: te.status,
@@ -168,6 +214,7 @@ export async function buildDemonstrativo(
       updatedAt: te.updatedAt,
       createdById: te.createdById,
       _fromTenantEntry: true,
+      sharePercent: shareDoOwner * 100,
     });
   }
 
@@ -586,20 +633,19 @@ export async function buildDemonstrativo(
       const brutoLiquido = Math.max(0, bruto - descontoProprio);
       // Fix Leo 13/05: respeitar adminWaived das notes do REPASSE.
       // Quando contrato tem intermediacao no mes, admin = 0 (regra Leo).
-      // Demonstrativo precisa bater EXATO com o repasse.
       const adminWaived = noteData?.adminWaived === true || noteData?.adminFeeValue === 0;
-      // Fix Paulo 19/05/2026: usar notes.adminFeeValue como FONTE DA VERDADE
-      // quando existir. Antes recalculava 10% × (bruto - desconto), gerando
-      // diferenca de R$ 7,30 vs a pagina de Repasses (caso Andre Etges).
-      // Regras de admin variam (Kampf, Ernani, Antar etc) e o calculo correto
-      // ja esta persistido em notes.adminFeeValue durante o ajuste manual.
-      // Aplica shareRatio porque adminFeeValue armazenado e' do contrato inteiro.
-      const adminFromNotes = typeof noteData?.adminFeeValue === "number" ? noteData.adminFeeValue : null;
+      // Fix Paulo 19/05/2026 (v2): admin = DERIVADA do e.value do Repasse.
+      // O PDF tem que ESPELHAR a pagina (que mostra e.value como liquido).
+      // admin_share = bruto_share - e.value (SEM subtrair desconto — desconto
+      // ja eh OwnerEntry DEBITO separado e aparece como linha propria).
+      // Casos:
+      //   Andre: bruto 2670, e.value 2403 -> admin = 267 ✓
+      //   Adriana 50%: bruto_share 1350, e.value 1215 -> admin = 135 ✓
+      //   Francisco (com desconto OE): bruto 6800, e.value 6120 -> admin = 680 ✓
+      //   (desconto -800 aparece como linha separada, total final bate).
       const adminFeeRecalc = adminWaived
         ? 0
-        : (adminFromNotes !== null && adminFromNotes >= 0
-            ? Math.round(adminFromNotes * shareRatio * 100) / 100
-            : Math.round((brutoLiquido * adminFeePercent / 100) * 100) / 100);
+        : Math.max(0, Math.round((bruto - (e.value || 0)) * 100) / 100);
 
       let irrfRecalc = 0;
       const irrfOriginal = noteData?.irrfValue || 0;
