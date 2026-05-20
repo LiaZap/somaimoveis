@@ -121,7 +121,9 @@ export async function buildDemonstrativo(
     },
     select: { id: true, ownerId: true, tenantId: true },
   });
-  const tenantIdsDoOwner = [...new Set(contratosDoOwner.map(c => c.tenantId))];
+  const tenantIdsDoOwner = [...new Set(
+    contratosDoOwner.map(c => c.tenantId).filter((id): id is string => !!id)
+  )];
   const contractIdsDoOwner = contratosDoOwner.map(c => c.id);
 
   const tenantEntriesForOwner = tenantIdsDoOwner.length > 0
