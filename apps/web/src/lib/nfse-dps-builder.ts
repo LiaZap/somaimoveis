@@ -171,7 +171,7 @@ export function buildDpsXml(params: DpsParams): { xml: string; idDps: string } {
       <regTrib>
         <opSimpNac>${prestador.regimeTributario === 1 ? "1" : "2"}</opSimpNac>${
           prestador.regimeTributario === 1 && prestador.simplesAliquota && prestador.simplesAliquota > 0
-            ? `\n        <regApTribSN>1</regApTribSN>\n        <pAliqApl>${prestador.simplesAliquota.toFixed(4)}</pAliqApl>`
+            ? `\n        <regApTribSN>1</regApTribSN>`
             : ""
         }
         <regEspTrib>0</regEspTrib>
