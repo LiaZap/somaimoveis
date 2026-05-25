@@ -279,3 +279,95 @@ export async function aguardarProcessamentoSpedy(
   if (last) return last;
   throw { status: 408, message: `Spedy: timeout aguardando processamento da NFS-e ${id}` } satisfies SpedyApiError;
 }
+
+// ============================================================================
+// Webhooks Spedy
+// ============================================================================
+// A Spedy NAO oferece UI no painel pra cadastrar webhooks — so via API REST.
+// Endpoints: POST /webhooks, GET /webhooks, PUT /webhooks/{id}, DELETE etc.
+
+export interface SpedyWebhook {
+  id: string;
+  url: string;
+  events: string[];
+  enabled?: boolean;
+  description?: string;
+  secret?: string;
+}
+
+export interface SpedyWebhookCreateBody {
+  url: string;
+  events: string[]; // ex: ["invoice.status_changed"]
+  description?: string;
+  secret?: string; // se setado, Spedy envia em X-Webhook-Secret
+}
+
+/**
+ * Cadastra um novo webhook no painel Spedy.
+ */
+export async function criarWebhookSpedy(
+  ambiente: SpedyAmbiente,
+  apiKey: string,
+  body: SpedyWebhookCreateBody
+): Promise<SpedyWebhook> {
+  const url = `${baseUrl(ambiente)}/webhooks`;
+  const res = await spedyFetch(url, {
+    method: "POST",
+    apiKey,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let parsed: unknown = text;
+    try { parsed = JSON.parse(text); } catch { /* ignore */ }
+    throw {
+      status: res.status,
+      message: `Spedy criar webhook falhou: HTTP ${res.status}`,
+      body: parsed,
+    } satisfies SpedyApiError;
+  }
+  return (await res.json()) as SpedyWebhook;
+}
+
+/**
+ * Lista webhooks cadastrados.
+ */
+export async function listarWebhooksSpedy(
+  ambiente: SpedyAmbiente,
+  apiKey: string
+): Promise<SpedyWebhook[]> {
+  const url = `${baseUrl(ambiente)}/webhooks`;
+  const res = await spedyFetch(url, { method: "GET", apiKey });
+  if (!res.ok) {
+    throw {
+      status: res.status,
+      message: `Spedy listar webhooks falhou: HTTP ${res.status}`,
+    } satisfies SpedyApiError;
+  }
+  const data = await res.json();
+  // API pode retornar { items: [...] } ou array direto
+  if (Array.isArray(data)) return data as SpedyWebhook[];
+  if (Array.isArray((data as { items?: SpedyWebhook[] }).items)) {
+    return (data as { items: SpedyWebhook[] }).items;
+  }
+  return [];
+}
+
+/**
+ * Remove um webhook.
+ */
+export async function removerWebhookSpedy(
+  ambiente: SpedyAmbiente,
+  apiKey: string,
+  webhookId: string
+): Promise<void> {
+  const url = `${baseUrl(ambiente)}/webhooks/${encodeURIComponent(webhookId)}`;
+  const res = await spedyFetch(url, { method: "DELETE", apiKey });
+  if (!res.ok && res.status !== 204) {
+    throw {
+      status: res.status,
+      message: `Spedy remover webhook falhou: HTTP ${res.status}`,
+    } satisfies SpedyApiError;
+  }
+}

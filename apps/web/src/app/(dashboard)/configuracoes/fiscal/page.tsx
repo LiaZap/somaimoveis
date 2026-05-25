@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Save, FileText, ShieldCheck, Building2, MapPin, Receipt, Globe } from "lucide-react";
+import { Loader2, Save, FileText, ShieldCheck, Building2, MapPin, Receipt, Globe, Webhook, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
 
 interface FiscalSettings {
   razaoSocial: string | null;
@@ -516,6 +516,11 @@ export default function ConfiguracoesFiscalPage() {
                 </p>
               </div>
             </div>
+
+            {/* Configuracao automatica de webhook (Spedy) */}
+            {settings.provedor === "SPEDY" && settings.apiTokenSet && (
+              <SpedyWebhookSection />
+            )}
           </CardContent>
         </Card>
 
@@ -655,6 +660,170 @@ export default function ConfiguracoesFiscalPage() {
             Salvar Configurações
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Componente: configuracao automatica de webhook Spedy
+// Spedy nao oferece UI no painel deles — entao a gente cadastra via API REST
+// pra eles, apontando pro nosso /api/webhook/spedy.
+// ============================================================================
+
+interface SpedyWebhookItem {
+  id: string;
+  url: string;
+  events: string[];
+  enabled?: boolean;
+  description?: string;
+}
+
+function SpedyWebhookSection() {
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [webhooks, setWebhooks] = useState<SpedyWebhookItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [lastReceiverUrl, setLastReceiverUrl] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/fiscal-settings/spedy-webhook");
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Erro ao listar webhooks");
+        setWebhooks([]);
+      } else {
+        setWebhooks(data.webhooks || []);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function configurar() {
+    setCreating(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/fiscal-settings/spedy-webhook", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Erro ao configurar webhook");
+        if (data.receiverUrl) setLastReceiverUrl(data.receiverUrl);
+        return;
+      }
+      setLastReceiverUrl(data.receiverUrl);
+      toast.success(
+        data.removidos > 0
+          ? `Webhook configurado (${data.removidos} duplicado(s) removido(s))`
+          : "Webhook configurado com sucesso!"
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function remover(id: string) {
+    if (!confirm("Remover este webhook da Spedy?")) return;
+    try {
+      const res = await fetch(`/api/fiscal-settings/spedy-webhook?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao remover");
+        return;
+      }
+      toast.success("Webhook removido");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro");
+    }
+  }
+
+  const ourReceiverConfigured = webhooks.some((w) =>
+    /\/api\/webhook\/spedy$/i.test(w.url || "")
+  );
+
+  return (
+    <div className="border-t pt-4 mt-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Webhook className="h-4 w-4 text-muted-foreground" />
+          <h4 className="text-sm font-semibold">Webhook Spedy (notificações em tempo real)</h4>
+        </div>
+        <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="gap-1.5 h-7 text-xs">
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          Atualizar
+        </Button>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        A Spedy <strong>não tem opção de webhook no painel deles</strong> — só via API.
+        Clique no botão abaixo pra cadastrar automaticamente o endereço do nosso receiver
+        (assim você não precisa ficar atualizando manualmente o status das notas).
+      </p>
+
+      {error && (
+        <div className="rounded-md bg-red-50 border border-red-200 p-2 text-xs text-red-700">
+          {error}
+        </div>
+      )}
+
+      {!loading && webhooks.length === 0 && !error && (
+        <div className="rounded-md bg-amber-50 border border-amber-200 p-2 text-xs text-amber-800 flex items-start gap-2">
+          <XCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>Nenhum webhook cadastrado na Spedy. Clique em "Configurar Webhook" abaixo.</span>
+        </div>
+      )}
+
+      {ourReceiverConfigured && (
+        <div className="rounded-md bg-emerald-50 border border-emerald-200 p-2 text-xs text-emerald-800 flex items-start gap-2">
+          <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>Webhook configurado corretamente apontando para este sistema.</span>
+        </div>
+      )}
+
+      {webhooks.length > 0 && (
+        <div className="border rounded-md divide-y text-xs">
+          {webhooks.map((w) => (
+            <div key={w.id} className="p-2 flex items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="font-mono text-[11px] truncate">{w.url}</div>
+                <div className="text-muted-foreground mt-0.5">
+                  {(w.events || []).join(", ") || "—"}
+                  {w.enabled === false && <span className="text-red-600 ml-2">(desabilitado)</span>}
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" className="h-6 text-[11px] text-red-600" onClick={() => remover(w.id)}>
+                Remover
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button onClick={configurar} disabled={creating} size="sm" className="gap-1.5">
+          {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Webhook className="h-3.5 w-3.5" />}
+          {ourReceiverConfigured ? "Recadastrar Webhook" : "Configurar Webhook"}
+        </Button>
+        {lastReceiverUrl && (
+          <code className="text-[11px] text-muted-foreground bg-muted px-2 py-1 rounded">
+            {lastReceiverUrl}
+          </code>
+        )}
       </div>
     </div>
   );
