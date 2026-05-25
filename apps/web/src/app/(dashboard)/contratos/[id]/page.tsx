@@ -58,6 +58,7 @@ import {
   Paperclip,
   RefreshCw,
   Upload,
+  XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContractForm } from "@/components/forms/contract-form";
@@ -139,6 +140,7 @@ const contractStatusConfig: Record<string, { label: string; className: string }>
   ATIVO: { label: "Ativo", className: "bg-emerald-100 text-emerald-700 border-emerald-200" },
   PENDENTE_RENOVACAO: { label: "Renovação", className: "bg-amber-100 text-amber-700 border-amber-200" },
   ENCERRADO: { label: "Encerrado", className: "bg-muted text-muted-foreground" },
+  RESCINDIDO: { label: "Rescindido", className: "bg-orange-100 text-orange-700 border-orange-200" },
   CANCELADO: { label: "Cancelado", className: "bg-red-100 text-red-700 border-red-200" },
 };
 
@@ -249,6 +251,10 @@ export default function ContratoDetalhePage() {
   const [renewEndDate, setRenewEndDate] = useState("");
   const [renewRentalValue, setRenewRentalValue] = useState("");
   const [renewLoading, setRenewLoading] = useState(false);
+  const [terminateDialogOpen, setTerminateDialogOpen] = useState(false);
+  const [terminateDate, setTerminateDate] = useState("");
+  const [terminateReason, setTerminateReason] = useState("");
+  const [terminateLoading, setTerminateLoading] = useState(false);
   const [contractDocs, setContractDocs] = useState<ContractDocument[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
@@ -458,6 +464,39 @@ export default function ContratoDetalhePage() {
     }
   }
 
+  // ---------- Rescindir Contrato ----------
+  async function handleTerminateContract() {
+    if (!contract) return;
+    setTerminateLoading(true);
+    try {
+      const payload: { terminatedAt?: string; terminationReason?: string } = {};
+      if (terminateDate) payload.terminatedAt = terminateDate;
+      if (terminateReason.trim()) payload.terminationReason = terminateReason.trim();
+
+      const response = await fetch(`/api/contracts/${contract.id}/terminate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        toast.error(error.error || "Erro ao rescindir contrato");
+        return;
+      }
+
+      toast.success("Contrato rescindido. Novas cobranças não serão geradas.");
+      setTerminateDialogOpen(false);
+      setTerminateDate("");
+      setTerminateReason("");
+      await fetchContract();
+    } catch {
+      toast.error("Erro ao rescindir contrato");
+    } finally {
+      setTerminateLoading(false);
+    }
+  }
+
   // ---------- Loading state ----------
 
   if (loading) {
@@ -572,6 +611,17 @@ export default function ContratoDetalhePage() {
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   Renovar Contrato
+                </Button>
+              )}
+              {(contract.status === "ATIVO" || contract.status === "PENDENTE_RENOVACAO") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-amber-700 hover:text-amber-700 hover:bg-amber-50 border-amber-200"
+                  onClick={() => setTerminateDialogOpen(true)}
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  Rescindir Contrato
                 </Button>
               )}
               <Button
@@ -1345,6 +1395,64 @@ export default function ContratoDetalhePage() {
             <Button onClick={handleRenewContract} disabled={renewLoading}>
               {renewLoading && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
               Renovar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rescindir Dialog */}
+      <Dialog open={terminateDialogOpen} onOpenChange={setTerminateDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rescindir Contrato</DialogTitle>
+            <DialogDescription>
+              O contrato <strong>{contract.code}</strong> será marcado como{" "}
+              <strong>RESCINDIDO</strong>. Não serão geradas mais cobranças/boletos,
+              mas todos os dados permanecem no sistema para relatórios fiscais (DIMOB).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="terminateDate">Data da Rescisão</Label>
+              <Input
+                id="terminateDate"
+                type="date"
+                value={terminateDate}
+                onChange={(e) => setTerminateDate(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Se não informado, usa a data de hoje.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="terminateReason">Motivo (opcional)</Label>
+              <Input
+                id="terminateReason"
+                placeholder="Ex: Inquilino desocupou imóvel em 15/04"
+                maxLength={500}
+                value={terminateReason}
+                onChange={(e) => setTerminateReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setTerminateDialogOpen(false);
+                setTerminateDate("");
+                setTerminateReason("");
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleTerminateContract}
+              disabled={terminateLoading}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {terminateLoading && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+              Confirmar Rescisão
             </Button>
           </DialogFooter>
         </DialogContent>

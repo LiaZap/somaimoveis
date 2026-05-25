@@ -59,7 +59,8 @@ export async function POST(request: NextRequest) {
     // Contratos: status ATIVO ou PENDENTE_RENOVACAO, ja existentes no mes de referencia.
     // NAO filtra por endDate: contrato 'vencido' (endDate no passado) com status
     // ATIVO segue gerando cobranca, ja que o locatario continua no imovel ate
-    // que o status seja mudado para ENCERRADO manualmente.
+    // que o status seja mudado para ENCERRADO/RESCINDIDO manualmente.
+    // RESCINDIDO/ENCERRADO/CANCELADO NUNCA geram cobranca.
     const contracts = await prisma.contract.findMany({
       where: {
         status: { in: ["ATIVO", "PENDENTE_RENOVACAO"] },
@@ -897,7 +898,7 @@ export async function GET(request: NextRequest) {
     // vigentes (locatario continua no imovel) e devem aparecer.
     const contracts = await prisma.contract.findMany({
       where: {
-        status: { in: ["ATIVO", "PENDENTE_RENOVACAO", "ENCERRADO"] },
+        status: { in: ["ATIVO", "PENDENTE_RENOVACAO", "ENCERRADO", "RESCINDIDO"] },
         startDate: { lte: refMonthEnd },
       },
       include: {
@@ -932,15 +933,16 @@ export async function GET(request: NextRequest) {
 
     const preview = contracts
       .map((c) => {
-        // So pula se status=ENCERRADO. Contratos ATIVO/PENDENTE_RENOVACAO
-        // com endDate no passado continuam vigentes (renovacao automatica
-        // ou aguardando definicao) — devem gerar cobranca normalmente.
-        if (c.status === "ENCERRADO") {
+        // Pula se status=ENCERRADO ou RESCINDIDO. Contratos ATIVO/
+        // PENDENTE_RENOVACAO com endDate no passado continuam vigentes
+        // (renovacao automatica ou aguardando definicao) — devem gerar
+        // cobranca normalmente.
+        if (c.status === "ENCERRADO" || c.status === "RESCINDIDO") {
           skippedContracts.push({
             contractCode: c.code,
             property: c.property?.title || "—",
             tenant: c.tenant?.name || "—",
-            reason: "Contrato encerrado",
+            reason: c.status === "RESCINDIDO" ? "Contrato rescindido" : "Contrato encerrado",
           });
           return null;
         }
