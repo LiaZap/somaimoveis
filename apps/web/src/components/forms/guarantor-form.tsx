@@ -8,6 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, Search } from "lucide-react";
 import { useCepLookup } from "@/hooks/use-cep-lookup";
 import { useCnpjLookup } from "@/hooks/use-cnpj-lookup";
+import { formatPhone as formatPhoneShared } from "@/lib/format-phone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -114,13 +115,7 @@ export function GuarantorForm({ open, onOpenChange, guarantor, onSuccess }: Guar
   const handleCnpjResult = useCallback(() => {}, []);
   const { formatCpfCnpj } = useCnpjLookup({ onResult: handleCnpjResult });
 
-  const formatPhone = useCallback((value: string): string => {
-    const clean = value.replace(/\D/g, "");
-    if (clean.length <= 2) return clean;
-    if (clean.length <= 7) return `(${clean.slice(0, 2)}) ${clean.slice(2)}`;
-    if (clean.length <= 10) return `(${clean.slice(0, 2)}) ${clean.slice(2, 6)}-${clean.slice(6)}`;
-    return `(${clean.slice(0, 2)}) ${clean.slice(2, 7)}-${clean.slice(7, 11)}`;
-  }, []);
+  const formatPhone = useCallback((value: string): string => formatPhoneShared(value), []);
 
   useEffect(() => {
     if (open) {
@@ -312,8 +307,8 @@ export function GuarantorForm({ open, onOpenChange, guarantor, onSuccess }: Guar
                 <Label htmlFor="g-phone">Telefone</Label>
                 <Input
                   id="g-phone"
-                  placeholder="(00) 00000-0000"
-                  maxLength={15}
+                  placeholder="(00) 00000-0000 ou +55 11 99999 8888"
+                  maxLength={22}
                   {...register("phone", {
                     onChange: (e) => {
                       setValue("phone", formatPhone(e.target.value));
@@ -339,8 +334,8 @@ export function GuarantorForm({ open, onOpenChange, guarantor, onSuccess }: Guar
                 <Label htmlFor="g-phone2">Telefone 2</Label>
                 <Input
                   id="g-phone2"
-                  placeholder="(00) 00000-0000"
-                  maxLength={15}
+                  placeholder="(00) 00000-0000 ou +55 11 99999 8888"
+                  maxLength={22}
                   {...register("phone2", {
                     onChange: (e) => {
                       setValue("phone2", formatPhone(e.target.value));

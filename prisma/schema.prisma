@@ -411,7 +411,7 @@ model Contract {
   id                         String              @id @default(cuid())
   code                       String              @unique // CTR-001, CTR-002...
   type                       String              @default("LOCACAO") // LOCACAO, ADMINISTRACAO, VISTORIA, PROCURACAO, ADITIVO, INTERMEDIACAO
-  status                     String              @default("ATIVO") // ATIVO, ENCERRADO, PENDENTE_RENOVACAO, CANCELADO
+  status                     String              @default("ATIVO") // ATIVO, ENCERRADO, RESCINDIDO, PENDENTE_RENOVACAO, CANCELADO
   // Partes
   propertyId                 String?
   property                   Property?           @relation(fields: [propertyId], references: [id], onDelete: Restrict)
@@ -454,6 +454,11 @@ model Contract {
   lastAdjustmentPercent      Float? // Ultimo % de reajuste aplicado
   // Documento
   documentUrl                String? // PDF do contrato
+  // Rescisao (status=RESCINDIDO): nao gera mais cobrancas/boletos mas dados
+  // permanecem para relatorios fiscais (DIMOB). terminatedAt e quando foi
+  // rescindido; terminationReason e motivo livre/observacao.
+  terminatedAt               DateTime?
+  terminationReason          String?
   // Meta
   notes                      String?
   createdAt                  DateTime            @default(now())

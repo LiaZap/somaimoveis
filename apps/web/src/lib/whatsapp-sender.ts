@@ -62,23 +62,35 @@ export interface SendResult {
 }
 
 /**
- * Formata numero de telefone para o padrao Uazapi (55XXXXXXXXXXX)
- * Remove +, espacos, hifens, parenteses e garante DDI 55
+ * Formata numero de telefone para o padrao Uazapi (DDI + numero, sem +).
+ * - Se o numero original comeca com "+": preserva os digitos como estao
+ *   (DDI ja explicito, NAO adiciona 55). Caso internacional.
+ * - Senao, se ja comeca com "55" e tem 12-13 digitos: ok.
+ * - Senao, se tem 10-11 digitos: assume BR e adiciona 55.
+ * - Senao: retorna so digitos (API valida).
  */
 function formatPhone(phone: string): string {
-  const digits = phone.replace(/\D/g, "");
+  const trimmed = (phone || "").trim();
+  const hadPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
 
-  // Se ja comeca com 55 e tem 12-13 digitos, esta correto
+  // Caso internacional explicito: preserva DDI digitado, nao adiciona 55
+  if (hadPlus) {
+    return digits;
+  }
+
+  // Ja comeca com 55 e tem 12-13 digitos (DDI BR + DDD + numero)
   if (digits.startsWith("55") && digits.length >= 12) {
     return digits;
   }
 
-  // Se tem 10-11 digitos (DDD + numero), adiciona 55
+  // 10-11 digitos: assume BR (DDD + numero) e adiciona DDI 55
   if (digits.length >= 10 && digits.length <= 11) {
     return `55${digits}`;
   }
 
-  // Retorna como esta (a API vai validar)
+  // 12+ digitos sem + e sem comecar com 55: provavel internacional sem +
+  // (caso usuario digitou "447911123456" UK sem o +) - preserva como esta
   return digits;
 }
 
