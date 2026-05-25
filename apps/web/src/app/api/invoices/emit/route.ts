@@ -3,6 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
 import { decryptString } from "@/lib/crypto";
 import { emitirNFSe, getIbgeCode, type Ambiente } from "@/lib/nfse-gov-br-client";
+import {
+  emitirNFSeSpedy,
+  aguardarProcessamentoSpedy,
+  type SpedyAmbiente,
+} from "@/lib/nfse-spedy-client";
 
 /**
  * POST /api/invoices/emit
@@ -54,20 +59,42 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!settings.certificadoPfx || !settings.certificadoPassword) {
-    return NextResponse.json(
-      { error: "Certificado A1 nao carregado. Acesse /configuracoes/fiscal." },
-      { status: 400 },
-    );
+  const provedor = (settings.provedor || "NFSE_NACIONAL").toUpperCase();
+  const isSpedy = provedor === "SPEDY";
+
+  // Spedy usa apiToken; outros provedores usam certificado A1
+  if (isSpedy) {
+    if (!settings.apiToken) {
+      return NextResponse.json(
+        { error: "Chave de API Spedy nao configurada. Acesse /configuracoes/fiscal." },
+        { status: 400 },
+      );
+    }
+  } else {
+    if (!settings.certificadoPfx || !settings.certificadoPassword) {
+      return NextResponse.json(
+        { error: "Certificado A1 nao carregado. Acesse /configuracoes/fiscal." },
+        { status: 400 },
+      );
+    }
   }
 
-  let certPassword: string;
+  let certPassword: string = "";
+  let spedyApiKey: string = "";
   try {
-    certPassword = decryptString(settings.certificadoPassword);
+    if (isSpedy) {
+      spedyApiKey = decryptString(settings.apiToken!);
+    } else {
+      certPassword = decryptString(settings.certificadoPassword!);
+    }
   } catch (err) {
-    console.error("[Invoice Emit] Erro ao descriptografar senha:", err);
+    console.error("[Invoice Emit] Erro ao descriptografar segredo:", err);
     return NextResponse.json(
-      { error: "Erro ao acessar senha do certificado. Re-uploade o certificado." },
+      {
+        error: isSpedy
+          ? "Erro ao acessar chave Spedy. Re-cadastre a chave em /configuracoes/fiscal."
+          : "Erro ao acessar senha do certificado. Re-uploade o certificado.",
+      },
       { status: 500 },
     );
   }
@@ -200,10 +227,110 @@ export async function POST(request: NextRequest) {
       : 1;
 
     try {
-      const result = await emitirNFSe({
+      let result: {
+        sucesso: boolean;
+        numero?: string;
+        serie?: string;
+        codigoVerificacao?: string;
+        chaveAcesso?: string;
+        dpsXml?: string;
+        xmlRetorno?: string;
+        pdfUrl?: string;
+        rejeicaoCodigo?: string;
+        rejeicaoMotivo?: string;
+        spedyId?: string;
+      };
+
+      if (isSpedy) {
+        // ===== Provedor SPEDY =====
+        const discriminacao = `Taxa de administracao imobiliaria${entry.contract ? ` ref. contrato ${entry.contract.code}` : ""}${competencia ? ` - competencia ${competencia}` : ""}`;
+        const aliquota = (settings.aliquotaIss || 2) / 100; // decimal
+        const issAmount = Math.round(adminFeeValue * aliquota * 100) / 100;
+        const tomadorEnderecoCidade = ibge
+          ? { code: ibge, name: entry.owner.city || "", state: entry.owner.state || "RS" }
+          : { code: "4316808", name: "Santa Cruz do Sul", state: "RS" };
+
+        try {
+          const created = await emitirNFSeSpedy({
+            ambiente: ambiente as SpedyAmbiente,
+            apiKey: spedyApiKey,
+            body: {
+              effectiveDate: new Date().toISOString().slice(0, 19),
+              sendEmailToCustomer: !!entry.owner.email,
+              description: discriminacao,
+              federalServiceCode: settings.codigoServicoMunicipal || "1.05",
+              cityServiceCode: settings.codigoServicoMunicipal || undefined,
+              taxationType: "taxationInMunicipality",
+              integrationId: entry.id.slice(-36),
+              receiver: {
+                name: entry.owner.name,
+                federalTaxNumber: tomadorDoc,
+                email: entry.owner.email || undefined,
+                address: entry.owner.street
+                  ? {
+                      street: entry.owner.street,
+                      number: entry.owner.number || "S/N",
+                      complement: entry.owner.complement || undefined,
+                      district: entry.owner.neighborhood || "Centro",
+                      city: tomadorEnderecoCidade,
+                      postalCode: (entry.owner.zipCode || "").replace(/\D/g, "") || undefined,
+                    }
+                  : undefined,
+              },
+              total: {
+                invoiceAmount: adminFeeValue,
+                issRate: aliquota,
+                issAmount,
+                issWithheld: !!settings.retemIss,
+              },
+            },
+          });
+
+          // Aguarda processar (polling ate authorized/rejected)
+          const final = await aguardarProcessamentoSpedy(
+            ambiente as SpedyAmbiente,
+            spedyApiKey,
+            created.id,
+            { maxTries: 8, intervalMs: 5000 },
+          );
+
+          const s = (final.status || "").toLowerCase();
+          if (s === "authorized") {
+            result = {
+              sucesso: true,
+              numero: String(final.number || ""),
+              serie: final.rps?.series || "",
+              codigoVerificacao: final.authorization?.protocol || "",
+              chaveAcesso: final.id, // Spedy nao tem chave de 44 digitos; usa o id
+              spedyId: final.id,
+              dpsXml: undefined,
+              xmlRetorno: JSON.stringify(final),
+              pdfUrl: undefined,
+            };
+          } else {
+            result = {
+              sucesso: false,
+              rejeicaoCodigo: final.processingDetail?.code || final.status,
+              rejeicaoMotivo: final.processingDetail?.message || `Status final: ${final.status}`,
+              spedyId: final.id,
+              xmlRetorno: JSON.stringify(final),
+            };
+          }
+        } catch (e: unknown) {
+          const err = e as { status?: number; message?: string; body?: unknown };
+          result = {
+            sucesso: false,
+            rejeicaoCodigo: String(err.status || "ERR"),
+            rejeicaoMotivo: err.message || "Erro desconhecido",
+            xmlRetorno: typeof err.body === "string" ? err.body : JSON.stringify(err.body || err),
+          };
+        }
+      } else {
+        // ===== Provedor NFSE_NACIONAL (gov.br) =====
+        result = await emitirNFSe({
         ambiente,
         certificado: {
-          pfx: Buffer.from(settings.certificadoPfx),
+          pfx: Buffer.from(settings.certificadoPfx!),
           password: certPassword,
         },
         prestador: {
@@ -250,7 +377,8 @@ export async function POST(request: NextRequest) {
         },
         numeroDps: nextNumeroDps,
         competencia: competencia || undefined,
-      });
+        });
+      }
 
       if (!result.sucesso) {
         results.push({

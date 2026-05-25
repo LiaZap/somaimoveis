@@ -133,7 +133,7 @@ model FiscalSettings {
   certificadoPfx         Bytes? // arquivo .pfx em si (raw bytes)
   certificadoPassword    String? // senha do .pfx, criptografada com AES-256-GCM
   // Integracao
-  provedor               String? // NFSE_NACIONAL | NFE_IO | PLUG_NOTAS | GISSONLINE | MANUAL
+  provedor               String? // NFSE_NACIONAL | NFE_IO | PLUG_NOTAS | GISSONLINE | SPEDY | MANUAL
   apiToken               String? // criptografado
   ambiente               String    @default("HOMOLOGACAO") // HOMOLOGACAO | PRODUCAO
   // Meta

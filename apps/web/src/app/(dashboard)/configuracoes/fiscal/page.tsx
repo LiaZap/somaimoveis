@@ -479,6 +479,9 @@ export default function ConfiguracoesFiscalPage() {
                     <SelectItem value="GISSONLINE">
                       GISSONLINE (Santa Cruz do Sul, direto)
                     </SelectItem>
+                    <SelectItem value="SPEDY">
+                      Spedy NFe (api.spedy.com.br)
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>

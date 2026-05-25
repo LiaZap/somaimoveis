@@ -41,6 +41,9 @@ interface NotaFiscal {
   nfEmitida: boolean;
   nfNumero: string;
   nfData: string;
+  invoiceId?: string | null;
+  invoiceStatus?: string | null;
+  invoicePdfUrl?: string | null;
 }
 
 interface NotasResponse {
@@ -236,6 +239,40 @@ export default function NotasFiscaisPage() {
 
   function imprimirIndividual(entryId: string) {
     window.open(`/notas-fiscais/imprimir?month=${month}&entryIds=${entryId}`, "_blank");
+  }
+
+  function baixarPdf(invoiceId: string) {
+    window.open(`/api/invoices/${invoiceId}/download?format=pdf`, "_blank");
+  }
+
+  function baixarXml(invoiceId: string) {
+    window.open(`/api/invoices/${invoiceId}/download?format=xml`, "_blank");
+  }
+
+  async function cancelarNF(invoiceId: string, ownerName: string) {
+    const justification = window.prompt(
+      `Cancelar a NF de ${ownerName} na prefeitura?\n\nInforme a justificativa do cancelamento (obrigatório):`
+    );
+    if (!justification || !justification.trim()) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ justification: justification.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao cancelar NF");
+        return;
+      }
+      toast.success("Solicitação de cancelamento enviada à prefeitura");
+      fetchNotas();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Erro ao cancelar NF";
+      toast.error(msg);
+    }
   }
 
   function exportCSV() {
@@ -536,7 +573,7 @@ export default function NotasFiscaisPage() {
                               {n.nfData || "-"}
                             </TableCell>
                             <TableCell>
-                              <div className="flex gap-1">
+                              <div className="flex gap-1 flex-wrap">
                                 <Button
                                   size="icon"
                                   variant="ghost"
@@ -546,11 +583,45 @@ export default function NotasFiscaisPage() {
                                 >
                                   <Printer className="h-3.5 w-3.5" />
                                 </Button>
+                                {n.invoiceId && (
+                                  <>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-7 w-7"
+                                      onClick={() => baixarPdf(n.invoiceId!)}
+                                      title="Baixar PDF"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 text-[11px] text-muted-foreground"
+                                      onClick={() => baixarXml(n.invoiceId!)}
+                                      title="Baixar XML"
+                                    >
+                                      XML
+                                    </Button>
+                                    {n.invoiceStatus !== "CANCELADA" && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 text-[11px] text-muted-foreground hover:text-red-700"
+                                        onClick={() => cancelarNF(n.invoiceId!, n.owner.name)}
+                                        title="Cancelar NF na prefeitura"
+                                      >
+                                        Cancelar
+                                      </Button>
+                                    )}
+                                  </>
+                                )}
                                 <Button
                                   size="sm"
                                   variant="ghost"
                                   className="h-7 text-[11px] text-muted-foreground hover:text-amber-700"
                                   onClick={() => reverterEmitida(n.entryId)}
+                                  title="Apenas remove marca local (não cancela na prefeitura)"
                                 >
                                   Reverter
                                 </Button>

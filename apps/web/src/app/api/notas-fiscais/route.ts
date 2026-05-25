@@ -93,6 +93,27 @@ export async function GET(request: NextRequest) {
     const nfEmitidas: Record<string, { emitida: boolean; numero?: string; data?: string }> =
       nfSetting ? JSON.parse(nfSetting.value) : {};
 
+    // Buscar Invoices ja persistidas (vinculadas via ownerEntryId) — fornece
+    // invoiceId/status real do banco pra UI chamar cancel/download.
+    const ownerEntryIds = entries.map((e) => e.id);
+    const invoices = ownerEntryIds.length > 0
+      ? await prisma.invoice.findMany({
+          where: { ownerEntryId: { in: ownerEntryIds } },
+          select: {
+            id: true,
+            ownerEntryId: true,
+            status: true,
+            numero: true,
+            chaveAcesso: true,
+            pdfUrl: true,
+            dataEmissao: true,
+          },
+        })
+      : [];
+    const invoiceByEntry = new Map(
+      invoices.filter((i) => i.ownerEntryId).map((i) => [i.ownerEntryId as string, i])
+    );
+
     const notas = entries.map((entry) => {
       const contract = entry.contractId ? contractMap.get(entry.contractId) || null : null;
       let adminFeePercent = contract?.adminFeePercent || 10;
@@ -138,6 +159,9 @@ export async function GET(request: NextRequest) {
       const adminFeeValue = Math.round(adminFeeEfetivoTotal * share * 100) / 100;
 
       const nfStatus = nfEmitidas[entry.id] || { emitida: false };
+      const inv = invoiceByEntry.get(entry.id);
+      // Considera emitida se: marcada no AppSetting OU tem Invoice AUTORIZADA no banco
+      const realmenteEmitida = nfStatus.emitida || inv?.status === "AUTORIZADA";
 
       return {
         entryId: entry.id,
@@ -150,9 +174,13 @@ export async function GET(request: NextRequest) {
         adminFeePercent,
         adminFeeValue,             // taxa sobre aluguel liquido x % do proprietario
         repasseValue: entry.value,
-        nfEmitida: nfStatus.emitida,
-        nfNumero: nfStatus.numero || "",
-        nfData: nfStatus.data || "",
+        nfEmitida: realmenteEmitida,
+        nfNumero: nfStatus.numero || inv?.numero || "",
+        nfData: nfStatus.data || (inv?.dataEmissao ? inv.dataEmissao.toISOString() : ""),
+        // Novos campos pra UI chamar cancel/download
+        invoiceId: inv?.id || null,
+        invoiceStatus: inv?.status || null,
+        invoicePdfUrl: inv?.pdfUrl || null,
       };
     });
 
