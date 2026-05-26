@@ -338,7 +338,12 @@ export async function POST(request: NextRequest) {
               sendEmailToCustomer: !!entry.owner.email,
               description: discriminacao,
               federalServiceCode: settings.codigoServicoMunicipal || "1.05",
-              cityServiceCode: settings.codigoServicoMunicipal || undefined,
+              // NAO enviar cityServiceCode no body — deixa a Spedy usar o
+              // codigo cTribMun cadastrado no PAINEL dela (que tem formato
+              // municipal sem ponto, ex: '1005' pra SC do Sul). Enviar aqui
+              // sobrescreve com o mesmo valor LC (com ponto, ex: '10.05')
+              // que a prefeitura rejeita por pattern invalido no cTribMun.
+              cityServiceCode: undefined,
               taxationType: "taxationInMunicipality",
               integrationId,
               receiver: {
