@@ -132,14 +132,35 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  // Carrega contracts separadamente (FK sem @relation no schema)
+  // Carrega contracts + property separadamente (FK sem @relation no schema)
   const contractIds = entriesRaw
     .map((e) => e.contractId)
     .filter((id): id is string => !!id);
   const contracts = contractIds.length > 0
     ? await prisma.contract.findMany({
         where: { id: { in: contractIds } },
-        select: { id: true, code: true, rentalValue: true, adminFeePercent: true },
+        select: {
+          id: true,
+          code: true,
+          rentalValue: true,
+          adminFeePercent: true,
+          propertyId: true,
+          property: {
+            select: {
+              id: true,
+              street: true,
+              number: true,
+              complement: true,
+              neighborhood: true,
+              city: true,
+              state: true,
+              zipCode: true,
+              iptuNumber: true,
+              registrationNumber: true,
+              type: true,
+            },
+          },
+        },
       })
     : [];
   const contractMap = new Map(contracts.map((c) => [c.id, c]));
@@ -367,6 +388,32 @@ export async function POST(request: NextRequest) {
                 issAmount,
                 issWithheld: !!settings.retemIss,
               },
+              // ibsCbs: bloco da Reforma Tributaria (LC 214/2025). Exigido
+              // pela Spedy quando "Habilitar campos da Reforma Tributaria"
+              // esta ON e o servico eh imobiliario (LC 10.05). Sem isso,
+              // erro E0932: "obrigatorio grupo de informacoes do imovel".
+              // Property vem do Contract.property associado a esta entry.
+              ibsCbs: entry.contract?.property ? {
+                cst: 200,
+                classification: 200046,
+                operationIndicatorCode: "020301",
+                isPersonalUse: false,
+                operationType: "supplyWithSubsequentPayment",
+                property: {
+                  address: {
+                    street: entry.contract.property.street,
+                    number: entry.contract.property.number || "S/N",
+                    complement: entry.contract.property.complement || undefined,
+                    district: entry.contract.property.neighborhood || "Centro",
+                    postalCode: (entry.contract.property.zipCode || "").replace(/\D/g, ""),
+                    city: {
+                      name: entry.contract.property.city || "Santa Cruz do Sul",
+                      state: entry.contract.property.state || "RS",
+                    },
+                    country: "BR",
+                  },
+                },
+              } : undefined,
             },
           });
 
