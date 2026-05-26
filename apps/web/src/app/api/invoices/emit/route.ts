@@ -341,6 +341,14 @@ export async function POST(request: NextRequest) {
         // ===== Provedor SPEDY =====
         const aliquota = aliqEfetiva.aliquotaIss / 100; // decimal (usa MENSAL > GLOBAL > 2%)
         const issAmount = Math.round(adminFeeValue * aliquota * 100) / 100;
+        // No Padrao Nacional, prestador Simples Nacional (ME/EPP) NAO pode
+        // informar aliquota nem valor de ISS quando nao ha retencao —
+        // o ISS eh recolhido via DAS, nao destacado. Erro E0625.
+        // Quando regime eh SIMPLES_NACIONAL e nao ha retencao, omitimos
+        // issRate e issAmount; em regime normal seguem normalmente.
+        const isSimplesNacional = (settings.regimeTributario || "").toUpperCase() === "SIMPLES_NACIONAL"
+          || settings.optanteSimples === true;
+        const enviarISS = !isSimplesNacional || !!settings.retemIss;
         const tomadorEnderecoCidade = ibge
           ? { code: ibge, name: entry.owner.city || "", state: entry.owner.state || "RS" }
           : { code: "4316808", name: "Santa Cruz do Sul", state: "RS" };
@@ -384,8 +392,7 @@ export async function POST(request: NextRequest) {
               },
               total: {
                 invoiceAmount: adminFeeValue,
-                issRate: aliquota,
-                issAmount,
+                ...(enviarISS ? { issRate: aliquota, issAmount } : {}),
                 issWithheld: !!settings.retemIss,
               },
               // ibsCbs: bloco da Reforma Tributaria (LC 214/2025). Exigido
