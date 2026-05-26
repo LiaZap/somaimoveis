@@ -136,6 +136,11 @@ model FiscalSettings {
   provedor               String? // NFSE_NACIONAL | NFE_IO | PLUG_NOTAS | GISSONLINE | SPEDY | MANUAL
   apiToken               String? // criptografado
   ambiente               String    @default("HOMOLOGACAO") // HOMOLOGACAO | PRODUCAO
+  // Contador atomico do proximo numero de DPS. Incrementado via update
+  // atomico ({ increment }) no inicio do /api/invoices/emit pra reservar
+  // a faixa antes do loop. Evita 2 emissoes concorrentes pegarem o mesmo
+  // numero (o antigo lastInvoice.numero+1 era race-prone).
+  nextNfDpsNumero        Int       @default(1)
   // Meta
   notes                  String?
   createdAt              DateTime  @default(now())
@@ -858,7 +863,11 @@ model Invoice {
   numero             String? // numero da NFS-e
   serie              String? // serie (ex: '1' ou 'A')
   codigoVerificacao  String? // codigo de verificacao (alfanumerico)
-  chaveAcesso        String?     @unique // chave nacional NFS-e (50 digitos)
+  // No NFSE_NACIONAL (gov.br) guarda a chave nacional de 50 digitos
+  // (formato AAAAMMDDCNPJ...). No provedor SPEDY guarda o id do recurso
+  // (UUID v4 do POST /service-invoices) — Spedy nao expoe a chave de 50
+  // digitos na resposta. Cancel/check-status usam esse campo pra rotear.
+  chaveAcesso        String?     @unique
   // Status
   status             String      @default("PENDENTE") // PENDENTE | PROCESSANDO | AUTORIZADA | REJEITADA | CANCELADA
   // Dados do servico

@@ -42,15 +42,33 @@ async function getSpedyContext(): Promise<
   return { ambiente, apiKey };
 }
 
-function getReceiverUrl(request: NextRequest): string {
-  // Permite override via env (util pra dev/staging)
+// Whitelist de hosts aceitos quando SPEDY_WEBHOOK_URL nao esta setado.
+// Defesa contra atacante plantando X-Forwarded-Host: attacker.com em proxy mal configurado.
+const ALLOWED_HOSTS = ["sommaimob.bahflash.tech", "localhost", "localhost:3000", "127.0.0.1"];
+
+function getReceiverUrl(request: NextRequest): { url: string } | { error: string; status: number } {
+  // Permite override via env (util pra dev/staging) — caminho preferencial em producao
   const fromEnv = process.env.SPEDY_WEBHOOK_URL;
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return { url: fromEnv };
 
   const proto = request.headers.get("x-forwarded-proto") || "https";
-  const host = request.headers.get("x-forwarded-host") ||
-    request.headers.get("host") || "sommaimob.bahflash.tech";
-  return `${proto}://${host}/api/webhook/spedy`;
+  const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
+
+  if (!host) {
+    return {
+      error: "Nao foi possivel determinar o host do receiver. Configure SPEDY_WEBHOOK_URL nas env vars.",
+      status: 500,
+    };
+  }
+
+  if (!ALLOWED_HOSTS.includes(host)) {
+    return {
+      error: `Host "${host}" nao esta na whitelist de hosts permitidos. Configure SPEDY_WEBHOOK_URL nas env vars pra evitar webhook injection via X-Forwarded-Host.`,
+      status: 500,
+    };
+  }
+
+  return { url: `${proto}://${host}/api/webhook/spedy` };
 }
 
 export async function GET(_req: NextRequest) {
@@ -83,12 +101,47 @@ export async function POST(request: NextRequest) {
   const ctx = await getSpedyContext();
   if ("error" in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status });
 
-  const receiverUrl = getReceiverUrl(request);
+  // Em PRODUCAO o secret eh obrigatorio — sem ele nao da pra autenticar webhook da Spedy.
+  if (ctx.ambiente === "PRODUCAO" && !process.env.WEBHOOK_SPEDY_SECRET) {
+    return NextResponse.json(
+      {
+        error: "WEBHOOK_SPEDY_SECRET nao configurado. Em producao, o secret eh obrigatorio pra autenticar webhooks da Spedy.",
+        hint: "Adicione WEBHOOK_SPEDY_SECRET=<valor-aleatorio> nas env vars do servidor e tente de novo.",
+      },
+      { status: 400 },
+    );
+  }
+
+  const receiverResult = getReceiverUrl(request);
+  if ("error" in receiverResult) {
+    return NextResponse.json({ error: receiverResult.error }, { status: receiverResult.status });
+  }
+  const receiverUrl = receiverResult.url;
   const secret = process.env.WEBHOOK_SPEDY_SECRET || undefined;
 
+  if (ctx.ambiente !== "PRODUCAO" && !secret) {
+    console.warn(
+      "[Spedy webhook] WEBHOOK_SPEDY_SECRET nao configurado em HOMOLOGACAO — webhook sera criado sem secret.",
+    );
+  }
+
+  // Lista existentes pra dedupar — se falhar, ABORTA pra nao gerar duplicados acumulando
+  let existentes: Awaited<ReturnType<typeof listarWebhooksSpedy>>;
   try {
-    // Antes de criar, lista existentes e remove duplicados apontando pra mesma URL
-    const existentes = await listarWebhooksSpedy(ctx.ambiente, ctx.apiKey);
+    existentes = await listarWebhooksSpedy(ctx.ambiente, ctx.apiKey);
+  } catch (e: unknown) {
+    const err = e as { status?: number; message?: string; body?: unknown };
+    return NextResponse.json(
+      {
+        error: "Falha ao listar webhooks existentes antes de criar. Aborte pra evitar duplicados.",
+        details: err.body ?? err.message,
+      },
+      { status: 502 },
+    );
+  }
+
+  try {
+    // Remove duplicados apontando pra mesma URL antes de criar o novo
     const duplicados = existentes.filter((w) => w.url === receiverUrl);
     for (const dup of duplicados) {
       try {

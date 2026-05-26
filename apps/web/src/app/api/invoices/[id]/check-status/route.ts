@@ -80,8 +80,21 @@ export async function POST(
 
     const updateData: Record<string, unknown> = {
       status: novoStatus,
-      respostaXml: JSON.stringify(nf),
     };
+
+    // FIX: so sobrescreve respostaXml se a nova resposta tiver conteudo
+    // util OU se o status mudou. Antes, qualquer check-status reescrevia
+    // respostaXml com a resposta atual da Spedy — em casos onde a Spedy
+    // retornava payload minimo (ex: ainda processando, sem detalhes), o
+    // XML rico anterior (com authorization, totals, etc) era perdido.
+    const novaResposta = JSON.stringify(nf);
+    const respostaAtual = invoice.respostaXml || "";
+    const statusMudou = novoStatus !== invoice.status;
+    const novaTemMaisInfo = novaResposta.length >= respostaAtual.length;
+    if (statusMudou || novaTemMaisInfo) {
+      updateData.respostaXml = novaResposta;
+    }
+
     if (nf.number) updateData.numero = String(nf.number);
     if (nf.rps?.series) updateData.serie = nf.rps.series;
     if (nf.authorization?.protocol) updateData.codigoVerificacao = nf.authorization.protocol;
@@ -93,6 +106,11 @@ export async function POST(
     } else if (novoStatus === "AUTORIZADA") {
       updateData.rejeicaoCodigo = null;
       updateData.rejeicaoMotivo = null;
+    } else if (novoStatus === "CANCELADA" && !invoice.dataCancelamento) {
+      // Confirma o cancelamento quando a Spedy reconhece o status final
+      // (cancel route deixa dataCancelamento null se a Spedy ainda estiver
+      // tramitando — aqui fecha o ciclo).
+      updateData.dataCancelamento = nf.issuedOn ? new Date(nf.issuedOn) : new Date();
     }
 
     const updated = await prisma.invoice.update({

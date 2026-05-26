@@ -71,12 +71,12 @@ export async function GET(request: NextRequest) {
   const ibge = getIbgeCode(settings.city || "", settings.state || "RS") || "4316808";
   const ambiente = settings.ambiente === "PRODUCAO" ? "PRODUCAO" : "HOMOLOGACAO";
 
-  // Numero sequencial: proximo da serie
-  const lastInvoice = await prisma.invoice.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { numero: true },
-  });
-  const nextNumeroDps = lastInvoice?.numero ? parseInt(lastInvoice.numero) + 1 : 1;
+  // Numero sequencial: le o contador atomico do FiscalSettings sem
+  // incrementar (preview e so visualizacao — quem reserva numero de fato
+  // e o /api/invoices/emit via increment). Pode haver pequena defasagem
+  // se outra emissao acontecer entre o preview e o emit real, mas isso
+  // nao afeta nada — o emit pega o numero correto na hora.
+  const nextNumeroDps = (settings.nextNfDpsNumero ?? 0) + 1;
 
   const competencia = entry.dueDate
     ? `${entry.dueDate.getFullYear()}-${String(entry.dueDate.getMonth() + 1).padStart(2, "0")}-01`

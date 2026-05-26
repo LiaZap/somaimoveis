@@ -958,8 +958,14 @@ function MonthlyAliquotaSection() {
 
       <p className="text-xs text-muted-foreground">
         No Simples Nacional, a alíquota efetiva muda mês a mês (depende do RBT12).
-        Cadastre a alíquota de cada mês — na hora de emitir a NFS-e, o sistema usa
-        a do mês da competência. Se não houver, cai na alíquota global cadastrada acima.
+        Cadastre a alíquota de cada mês — na hora de emitir, o sistema usa a do
+        mês da competência.
+        <br />
+        <strong>Fallback automático:</strong> se a competência ainda não tem
+        apuração (ex: contabilidade não enviou abril), o sistema usa a do <em>mês
+        anterior mais recente cadastrado</em> (ex: março). Se ainda assim não houver,
+        cai na alíquota global. Quando a contabilidade liberar o mês novo, é só
+        cadastrar — ele passa a valer automaticamente.
       </p>
 
       {/* Tabela */}
