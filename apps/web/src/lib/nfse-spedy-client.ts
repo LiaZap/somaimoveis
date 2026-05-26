@@ -289,7 +289,8 @@ export async function aguardarProcessamentoSpedy(
 export interface SpedyWebhook {
   id: string;
   url: string;
-  events: string[];
+  event?: string;          // formato novo (singular)
+  events?: string[];       // formato antigo (alguns endpoints ainda retornam)
   enabled?: boolean;
   description?: string;
   secret?: string;
@@ -297,9 +298,9 @@ export interface SpedyWebhook {
 
 export interface SpedyWebhookCreateBody {
   url: string;
-  events: string[]; // ex: ["invoice.status_changed"]
+  event: string;           // SPEDY exige singular ex: "invoice.status_changed"
   description?: string;
-  secret?: string; // se setado, Spedy envia em X-Webhook-Secret
+  secret?: string;         // se setado, Spedy envia em X-Webhook-Secret
 }
 
 /**

@@ -674,7 +674,8 @@ export default function ConfiguracoesFiscalPage() {
 interface SpedyWebhookItem {
   id: string;
   url: string;
-  events: string[];
+  event?: string;
+  events?: string[];
   enabled?: boolean;
   description?: string;
 }
@@ -809,7 +810,7 @@ function SpedyWebhookSection() {
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-[11px] truncate">{w.url}</div>
                 <div className="text-muted-foreground mt-0.5">
-                  {(w.events || []).join(", ") || "—"}
+                  {w.event || (w.events || []).join(", ") || "—"}
                   {w.enabled === false && <span className="text-red-600 ml-2">(desabilitado)</span>}
                 </div>
               </div>

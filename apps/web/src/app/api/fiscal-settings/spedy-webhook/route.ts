@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
 
     const created = await criarWebhookSpedy(ctx.ambiente, ctx.apiKey, {
       url: receiverUrl,
-      events: ["invoice.status_changed"],
+      event: "invoice.status_changed",
       description: "Somma Imoveis - integracao automatica",
       secret,
     });
