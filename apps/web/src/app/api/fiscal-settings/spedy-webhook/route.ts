@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requirePagePermission, isAuthError } from "@/lib/api-auth";
-import { decryptString } from "@/lib/crypto";
+import { safeDecryptString } from "@/lib/crypto";
 import {
   criarWebhookSpedy,
   listarWebhooksSpedy,
@@ -34,11 +34,9 @@ async function getSpedyContext(): Promise<
   if (!settings.apiToken) {
     return { error: "API Key da Spedy nao configurada", status: 400 };
   }
-  let apiKey: string;
-  try {
-    apiKey = decryptString(settings.apiToken);
-  } catch {
-    return { error: "Erro ao decifrar API Key", status: 500 };
+  const apiKey = safeDecryptString(settings.apiToken);
+  if (!apiKey) {
+    return { error: "API Key vazia apos decifragem", status: 500 };
   }
   const ambiente = (settings.ambiente || "HOMOLOGACAO").toUpperCase() as SpedyAmbiente;
   return { ambiente, apiKey };

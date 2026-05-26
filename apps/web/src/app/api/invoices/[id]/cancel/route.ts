@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requirePagePermission, isAuthError } from "@/lib/api-auth";
-import { decryptString } from "@/lib/crypto";
+import { safeDecryptString } from "@/lib/crypto";
 import { cancelarNFSeSpedy, type SpedyAmbiente } from "@/lib/nfse-spedy-client";
 
 export async function POST(
@@ -79,13 +79,10 @@ export async function POST(
     );
   }
 
-  let apiKey: string;
-  try {
-    apiKey = decryptString(settings.apiToken);
-  } catch (err) {
-    console.error("[Invoice Cancel] decryptString:", err);
+  const apiKey = safeDecryptString(settings.apiToken);
+  if (!apiKey) {
     return NextResponse.json(
-      { error: "Erro ao acessar chave Spedy" },
+      { error: "API Key Spedy vazia apos decifragem. Re-cadastre em /configuracoes/fiscal." },
       { status: 500 },
     );
   }

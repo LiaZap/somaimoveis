@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requirePagePermission, isAuthError } from "@/lib/api-auth";
-import { decryptString } from "@/lib/crypto";
+import { safeDecryptString } from "@/lib/crypto";
 import {
   checkStatusSpedy,
   consultarNFSeSpedy,
@@ -61,12 +61,12 @@ export async function POST(
     );
   }
 
-  let apiKey: string;
-  try {
-    apiKey = decryptString(settings.apiToken);
-  } catch (err) {
-    console.error("[Invoice CheckStatus] decryptString:", err);
-    return NextResponse.json({ error: "Erro ao acessar chave Spedy" }, { status: 500 });
+  const apiKey = safeDecryptString(settings.apiToken);
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "API Key Spedy vazia apos decifragem. Re-cadastre em /configuracoes/fiscal." },
+      { status: 500 }
+    );
   }
 
   const ambiente = (settings.ambiente || "HOMOLOGACAO").toUpperCase() as SpedyAmbiente;
