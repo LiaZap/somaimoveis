@@ -220,12 +220,34 @@ export async function POST(request: NextRequest) {
     if (!adminFeeValue && entry.contract && aluguelBruto) {
       adminFeeValue = Math.round(aluguelBruto * (adminFeePercent / 100) * 100) / 100;
     }
+    // Fallback: lancamentos manuais (sem notes JSON e sem aluguelBruto) — busca
+    // OwnerEntry irmao de categoria INTERMEDIACAO no mesmo mes/owner/contract.
+    // Essa eh a "taxa adm" registrada como debito separado no fluxo manual.
+    if (!adminFeeValue && entry.dueDate) {
+      const inicio = new Date(entry.dueDate.getFullYear(), entry.dueDate.getMonth(), 1);
+      const fim = new Date(entry.dueDate.getFullYear(), entry.dueDate.getMonth() + 1, 1);
+      const intermediacao = await prisma.ownerEntry.findFirst({
+        where: {
+          ownerId: entry.ownerId,
+          contractId: entry.contractId ?? undefined,
+          category: "INTERMEDIACAO",
+          dueDate: { gte: inicio, lt: fim },
+          status: { not: "CANCELADO" },
+        },
+        select: { value: true },
+      });
+      if (intermediacao?.value) {
+        adminFeeValue = Number(intermediacao.value);
+      }
+    }
     if (!adminFeeValue) {
       results.push({
         ownerEntryId: entry.id,
         ownerName: entry.owner.name,
         success: false,
-        error: "Nao foi possivel determinar o valor da taxa de administracao",
+        error: "Nao foi possivel determinar o valor da taxa de administracao. " +
+          "Cadastre um lancamento de INTERMEDIACAO no mesmo mes/owner com o valor da taxa, " +
+          "ou adicione `{\"adminFeeValue\": XXX}` no campo de observacoes deste lancamento.",
       });
       continue;
     }
