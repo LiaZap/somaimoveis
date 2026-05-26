@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
-import { decryptString } from "@/lib/crypto";
+import { decryptString, safeDecryptString } from "@/lib/crypto";
 import { emitirNFSe, getIbgeCode, type Ambiente } from "@/lib/nfse-gov-br-client";
 import {
   emitirNFSeSpedy,
@@ -83,7 +83,8 @@ export async function POST(request: NextRequest) {
   let spedyApiKey: string = "";
   try {
     if (isSpedy) {
-      spedyApiKey = decryptString(settings.apiToken!);
+      // safeDecrypt: tolera tokens salvos em texto plano (bug antigo)
+      spedyApiKey = safeDecryptString(settings.apiToken!);
     } else {
       certPassword = decryptString(settings.certificadoPassword!);
     }

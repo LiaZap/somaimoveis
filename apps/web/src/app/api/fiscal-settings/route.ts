@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { encryptString } from "@/lib/crypto";
 
 /**
  * GET /api/fiscal-settings — retorna o registro singleton (cria se nao existir)
@@ -85,9 +86,18 @@ export async function PUT(request: NextRequest) {
         : null;
     }
 
-    // Token: so atualiza se enviado E nao for o placeholder
+    // Token: so atualiza se enviado E nao for o placeholder.
+    // CRIPTOGRAFA com AES-256-GCM antes de salvar (decryptString usa isso).
     if (body.apiToken && body.apiToken !== "***") {
-      data.apiToken = body.apiToken;
+      try {
+        data.apiToken = encryptString(String(body.apiToken));
+      } catch (err) {
+        console.error("[fiscal-settings PUT] Erro ao criptografar apiToken:", err);
+        return NextResponse.json(
+          { error: "Erro ao criptografar API Key. Verifique ENCRYPTION_KEY no servidor." },
+          { status: 500 },
+        );
+      }
     } else if (body.apiToken === null || body.apiToken === "") {
       data.apiToken = null;
     }

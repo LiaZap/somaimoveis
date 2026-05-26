@@ -64,3 +64,20 @@ export function decryptString(ciphertextB64: string): string {
 export function isEncryptionConfigured(): boolean {
   return !!process.env.ENCRYPTION_KEY && process.env.ENCRYPTION_KEY.length >= 16;
 }
+
+/**
+ * Tenta descriptografar. Se falhar (provavelmente porque foi salvo em
+ * texto plano em uma versao antiga), retorna o valor original.
+ *
+ * Util pra migracao gradual: campos salvos antes do bug de criptografia
+ * continuam funcionando, e da pra re-salvar ja criptografado depois.
+ */
+export function safeDecryptString(value: string): string {
+  if (!value) return value;
+  try {
+    return decryptString(value);
+  } catch {
+    // Provavelmente texto plano (bug antigo) — retorna como esta
+    return value;
+  }
+}
