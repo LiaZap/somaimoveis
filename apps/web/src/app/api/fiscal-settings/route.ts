@@ -89,8 +89,21 @@ export async function PUT(request: NextRequest) {
     // Token: so atualiza se enviado E nao for o placeholder.
     // CRIPTOGRAFA com AES-256-GCM antes de salvar (decryptString usa isso).
     if (body.apiToken && body.apiToken !== "***") {
+      const tokenStr = String(body.apiToken).trim();
+      // Sanity check: API keys da Spedy tem ~30-60 chars. Rejeitar coisas
+      // muito curtas evita o problema de "salvei 6 chars achando que tava ok".
+      if (tokenStr.length < 20) {
+        return NextResponse.json(
+          {
+            error: `API Key muito curta (${tokenStr.length} chars). ` +
+              "Chaves da Spedy tem geralmente 30+ caracteres. " +
+              "Copie a chave inteira do painel Spedy > API Keys.",
+          },
+          { status: 400 },
+        );
+      }
       try {
-        data.apiToken = encryptString(String(body.apiToken));
+        data.apiToken = encryptString(tokenStr);
       } catch (err) {
         console.error("[fiscal-settings PUT] Erro ao criptografar apiToken:", err);
         return NextResponse.json(

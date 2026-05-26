@@ -683,7 +683,7 @@ function SpedyWebhookSection() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [webhooks, setWebhooks] = useState<SpedyWebhookItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; details?: unknown } | null>(null);
   const [lastReceiverUrl, setLastReceiverUrl] = useState<string | null>(null);
 
   async function load() {
@@ -693,13 +693,13 @@ function SpedyWebhookSection() {
       const res = await fetch("/api/fiscal-settings/spedy-webhook");
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Erro ao listar webhooks");
+        setError({ message: data.error || "Erro ao listar webhooks", details: data.details });
         setWebhooks([]);
       } else {
         setWebhooks(data.webhooks || []);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro");
+      setError({ message: e instanceof Error ? e.message : "Erro" });
     } finally {
       setLoading(false);
     }
@@ -716,7 +716,7 @@ function SpedyWebhookSection() {
       const res = await fetch("/api/fiscal-settings/spedy-webhook", { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Erro ao configurar webhook");
+        setError({ message: data.error || "Erro ao configurar webhook", details: data.details });
         if (data.receiverUrl) setLastReceiverUrl(data.receiverUrl);
         return;
       }
@@ -728,7 +728,7 @@ function SpedyWebhookSection() {
       );
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro");
+      setError({ message: e instanceof Error ? e.message : "Erro" });
     } finally {
       setCreating(false);
     }
@@ -776,8 +776,15 @@ function SpedyWebhookSection() {
       </p>
 
       {error && (
-        <div className="rounded-md bg-red-50 border border-red-200 p-2 text-xs text-red-700">
-          {error}
+        <div className="rounded-md bg-red-50 border border-red-200 p-2 text-xs text-red-700 space-y-1">
+          <div>{error.message}</div>
+          {error.details != null && (
+            <pre className="text-[10px] bg-red-100 p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all">
+              {typeof error.details === "string"
+                ? error.details
+                : JSON.stringify(error.details, null, 2)}
+            </pre>
+          )}
         </div>
       )}
 
