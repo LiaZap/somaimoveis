@@ -340,9 +340,13 @@ export async function listarWebhooksSpedy(
   const url = `${baseUrl(ambiente)}/webhooks`;
   const res = await spedyFetch(url, { method: "GET", apiKey });
   if (!res.ok) {
+    const text = await res.text();
+    let body: unknown = text;
+    try { body = JSON.parse(text); } catch { /* ignore */ }
     throw {
       status: res.status,
       message: `Spedy listar webhooks falhou: HTTP ${res.status}`,
+      body,
     } satisfies SpedyApiError;
   }
   const data = await res.json();

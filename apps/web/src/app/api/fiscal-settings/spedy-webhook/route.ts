@@ -64,9 +64,13 @@ export async function GET(_req: NextRequest) {
     const webhooks = await listarWebhooksSpedy(ctx.ambiente, ctx.apiKey);
     return NextResponse.json({ webhooks });
   } catch (e: unknown) {
-    const err = e as { status?: number; message?: string };
+    const err = e as { status?: number; message?: string; body?: unknown };
     return NextResponse.json(
-      { error: err.message || "Erro ao listar webhooks" },
+      {
+        error: err.message || "Erro ao listar webhooks",
+        details: err.body,
+        ambiente: ctx.ambiente,
+      },
       { status: err.status || 500 }
     );
   }
