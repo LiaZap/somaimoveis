@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Save, FileText, ShieldCheck, Building2, MapPin, Receipt, Globe, Webhook, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
+import { Loader2, Save, FileText, ShieldCheck, Building2, MapPin, Receipt, Globe, Webhook, CheckCircle2, XCircle, RefreshCw, Calendar, Plus, Trash2 } from "lucide-react";
 
 interface FiscalSettings {
   razaoSocial: string | null;
@@ -521,6 +521,9 @@ export default function ConfiguracoesFiscalPage() {
             {settings.provedor === "SPEDY" && settings.apiTokenSet && (
               <SpedyWebhookSection />
             )}
+
+            {/* Aliquotas por mes (usadas em vez da global na hora de emitir) */}
+            <MonthlyAliquotaSection />
           </CardContent>
         </Card>
 
@@ -832,6 +835,252 @@ function SpedyWebhookSection() {
             {lastReceiverUrl}
           </code>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Componente: aliquotas por mes (sobrescreve a global na hora de emitir)
+// Util pra Simples Nacional onde a aliquota efetiva muda mes a mes (RBT12).
+// ============================================================================
+
+interface MonthlyAliquotaItem {
+  id: string;
+  ano: number;
+  mes: number;
+  aliquotaIss: number;
+  simplesAliquota: number | null;
+  notes: string | null;
+}
+
+const MESES = [
+  "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+  "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+];
+
+function MonthlyAliquotaSection() {
+  const now = new Date();
+  const [items, setItems] = useState<MonthlyAliquotaItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    ano: String(now.getFullYear()),
+    mes: String(now.getMonth() + 1),
+    aliquotaIss: "",
+    simplesAliquota: "",
+    notes: "",
+  });
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/fiscal-settings/aliquotas-mensais");
+      const data = await res.json();
+      if (res.ok) setItems(data.items || []);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function salvar() {
+    if (!form.aliquotaIss) {
+      toast.error("Informe a aliquota ISS");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch("/api/fiscal-settings/aliquotas-mensais", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ano: Number(form.ano),
+          mes: Number(form.mes),
+          aliquotaIss: Number(form.aliquotaIss),
+          simplesAliquota: form.simplesAliquota ? Number(form.simplesAliquota) : null,
+          notes: form.notes.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao salvar");
+        return;
+      }
+      toast.success(`Aliquota ${MESES[Number(form.mes) - 1]}/${form.ano} salva`);
+      setForm({
+        ano: form.ano,
+        mes: form.mes,
+        aliquotaIss: "",
+        simplesAliquota: "",
+        notes: "",
+      });
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remover(item: MonthlyAliquotaItem) {
+    if (!confirm(`Remover aliquota de ${MESES[item.mes - 1]}/${item.ano}?`)) return;
+    try {
+      const res = await fetch(
+        `/api/fiscal-settings/aliquotas-mensais?id=${encodeURIComponent(item.id)}`,
+        { method: "DELETE" },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao remover");
+        return;
+      }
+      toast.success("Removida");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro");
+    }
+  }
+
+  return (
+    <div className="border-t pt-4 mt-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-muted-foreground" />
+          <h4 className="text-sm font-semibold">Alíquotas por mês (Simples Nacional)</h4>
+        </div>
+        <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="gap-1.5 h-7 text-xs">
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          Atualizar
+        </Button>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        No Simples Nacional, a alíquota efetiva muda mês a mês (depende do RBT12).
+        Cadastre a alíquota de cada mês — na hora de emitir a NFS-e, o sistema usa
+        a do mês da competência. Se não houver, cai na alíquota global cadastrada acima.
+      </p>
+
+      {/* Tabela */}
+      {items.length > 0 && (
+        <div className="border rounded-md text-xs overflow-hidden">
+          <div className="grid grid-cols-[100px_1fr_1fr_2fr_60px] gap-2 bg-muted/50 px-3 py-2 font-medium text-muted-foreground">
+            <div>Mês/Ano</div>
+            <div>ISS %</div>
+            <div>Simples %</div>
+            <div>Obs</div>
+            <div></div>
+          </div>
+          {items.map((it) => (
+            <div
+              key={it.id}
+              className="grid grid-cols-[100px_1fr_1fr_2fr_60px] gap-2 px-3 py-2 border-t items-center"
+            >
+              <div className="font-mono">{MESES[it.mes - 1]}/{it.ano}</div>
+              <div>{it.aliquotaIss.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}%</div>
+              <div>
+                {it.simplesAliquota != null
+                  ? `${it.simplesAliquota.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}%`
+                  : "—"}
+              </div>
+              <div className="text-muted-foreground truncate">{it.notes || "—"}</div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 text-red-600"
+                onClick={() => remover(it)}
+                title="Remover"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Formulário de adicionar/editar (upsert por ano+mes) */}
+      <div className="border rounded-md p-3 bg-muted/30 space-y-2">
+        <div className="text-xs font-medium text-muted-foreground">
+          Adicionar / atualizar mês
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          <div className="space-y-1">
+            <Label className="text-[11px]">Mês</Label>
+            <Select
+              value={form.mes}
+              onValueChange={(v) => setForm({ ...form, mes: v })}
+            >
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MESES.map((m, i) => (
+                  <SelectItem key={i + 1} value={String(i + 1)}>
+                    {m}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px]">Ano</Label>
+            <Input
+              type="number"
+              min={2000}
+              max={2100}
+              value={form.ano}
+              onChange={(e) => setForm({ ...form, ano: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px]">ISS %</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              min="0"
+              max="100"
+              placeholder="2.00"
+              value={form.aliquotaIss}
+              onChange={(e) => setForm({ ...form, aliquotaIss: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px]">Simples % (opc)</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              min="0"
+              max="100"
+              placeholder="6.00"
+              value={form.simplesAliquota}
+              onChange={(e) => setForm({ ...form, simplesAliquota: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px]">Obs</Label>
+            <Input
+              placeholder="opcional"
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            onClick={salvar}
+            disabled={saving || !form.aliquotaIss}
+            className="gap-1.5"
+          >
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            Salvar mês
+          </Button>
+        </div>
       </div>
     </div>
   );

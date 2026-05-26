@@ -8,6 +8,7 @@ import {
   aguardarProcessamentoSpedy,
   type SpedyAmbiente,
 } from "@/lib/nfse-spedy-client";
+import { getAliquotaParaCompetencia } from "@/lib/fiscal-aliquota";
 
 /**
  * POST /api/invoices/emit
@@ -218,6 +219,16 @@ export async function POST(request: NextRequest) {
       ? `${entry.dueDate.getFullYear()}-${String(entry.dueDate.getMonth() + 1).padStart(2, "0")}`
       : null;
 
+    // Resolve aliquota efetiva da competencia: tabela mensal > global > 2%
+    const compAno = entry.dueDate?.getFullYear() ?? new Date().getFullYear();
+    const compMes = (entry.dueDate?.getMonth() ?? new Date().getMonth()) + 1;
+    const aliqEfetiva = await getAliquotaParaCompetencia(
+      compAno,
+      compMes,
+      settings.aliquotaIss,
+      settings.simplesAliquota,
+    );
+
     // Numero sequencial da DPS — usa o proximo disponivel no banco
     const lastInvoice = await prisma.invoice.findFirst({
       orderBy: { createdAt: "desc" },
@@ -245,7 +256,7 @@ export async function POST(request: NextRequest) {
       if (isSpedy) {
         // ===== Provedor SPEDY =====
         const discriminacao = `Taxa de administracao imobiliaria${entry.contract ? ` ref. contrato ${entry.contract.code}` : ""}${competencia ? ` - competencia ${competencia}` : ""}`;
-        const aliquota = (settings.aliquotaIss || 2) / 100; // decimal
+        const aliquota = aliqEfetiva.aliquotaIss / 100; // decimal (usa MENSAL > GLOBAL > 2%)
         const issAmount = Math.round(adminFeeValue * aliquota * 100) / 100;
         const tomadorEnderecoCidade = ibge
           ? { code: ibge, name: entry.owner.city || "", state: entry.owner.state || "RS" }
@@ -351,7 +362,7 @@ export async function POST(request: NextRequest) {
           simplesAliquota:
             simplesAliquotaOverride && Number.isFinite(simplesAliquotaOverride) && simplesAliquotaOverride > 0
               ? simplesAliquotaOverride
-              : settings.simplesAliquota || undefined,
+              : (aliqEfetiva.simplesAliquota ?? settings.simplesAliquota ?? undefined),
         },
         tomador: {
           tipo: tomadorTipo,
@@ -372,7 +383,7 @@ export async function POST(request: NextRequest) {
           codigoServico: settings.codigoServicoMunicipal,
           discriminacao: `Taxa de administracao imobiliaria${entry.contract ? ` ref. contrato ${entry.contract.code}` : ""}${competencia ? ` - competencia ${competencia}` : ""}`,
           valorServicos: adminFeeValue,
-          aliquotaIss: settings.aliquotaIss || 2,
+          aliquotaIss: aliqEfetiva.aliquotaIss,
           issRetido: settings.retemIss,
           municipioPrestacao: ibge || "4316808",
         },
@@ -412,8 +423,8 @@ export async function POST(request: NextRequest) {
           codigoServico: settings.codigoServicoMunicipal,
           discriminacao: `Taxa de administracao imobiliaria${entry.contract ? ` ref. contrato ${entry.contract.code}` : ""}${competencia ? ` - competencia ${competencia}` : ""}`,
           valorServicos: adminFeeValue,
-          aliquotaIss: settings.aliquotaIss,
-          valorIss: settings.retemIss ? Math.round(adminFeeValue * (settings.aliquotaIss || 2) / 100 * 100) / 100 : 0,
+          aliquotaIss: aliqEfetiva.aliquotaIss,
+          valorIss: settings.retemIss ? Math.round(adminFeeValue * aliqEfetiva.aliquotaIss / 100 * 100) / 100 : 0,
           issRetido: settings.retemIss,
           regimeTributario: settings.regimeTributario,
           dpsXml: result.dpsXml,

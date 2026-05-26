@@ -144,6 +144,23 @@ model FiscalSettings {
   @@map("fiscal_settings")
 }
 
+// Aliquotas variaveis por mes (tipico Simples Nacional - alq efetiva muda
+// conforme RBT12). Quando definida, sobrescreve aliquotaIss e simplesAliquota
+// globais do FiscalSettings na hora de emitir a NFS-e do mes correspondente.
+model MonthlyAliquota {
+  id              String   @id @default(cuid())
+  ano             Int      // ex: 2026
+  mes             Int      // 1-12
+  aliquotaIss     Float    // % do ISS (ex: 2 = 2%)
+  simplesAliquota Float?   // % Simples efetiva (opcional)
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([ano, mes])
+  @@map("monthly_aliquotas")
+}
+
 // ==========================================
 // PROPRIETARIOS
 // ==========================================
