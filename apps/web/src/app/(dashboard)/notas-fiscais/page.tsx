@@ -16,6 +16,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Search,
   CheckCircle2,
@@ -24,12 +33,16 @@ import {
   FileText,
   Download,
   Printer,
+  AlertTriangle,
+  Loader2,
+  RefreshCw,
+  EyeOff,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface NotaFiscal {
   entryId: string;
   owner: { id: string; name: string; cpfCnpj: string };
+  naoDeclaraImob?: boolean;
   contract: { id: string; code: string; rentalValue: number; adminFeePercent: number } | null;
   aluguelBruto: number;
   aluguelBrutoOriginal?: number;
@@ -39,11 +52,14 @@ interface NotaFiscal {
   adminFeeValue: number;
   repasseValue: number;
   nfEmitida: boolean;
+  realmenteEmitida?: boolean;
   nfNumero: string;
   nfData: string;
   invoiceId?: string | null;
-  invoiceStatus?: string | null;
+  invoiceStatus?: string | null; // PENDENTE | PROCESSANDO | AUTORIZADA | REJEITADA | CANCELADA | null
   invoicePdfUrl?: string | null;
+  rejeicaoCodigo?: string | null;
+  rejeicaoMotivo?: string | null;
 }
 
 interface NotasResponse {
@@ -51,9 +67,19 @@ interface NotasResponse {
   total: number;
   emitidas: number;
   pendentes: number;
+  rejeitadas?: number;
+  processando?: number;
   totalAdminFee: number;
+  provedor?: string | null;
   notas: NotaFiscal[];
 }
+
+interface EmissionError {
+  ownerName: string;
+  error: string;
+}
+
+type TabKey = "pendentes" | "rejeitadas" | "processando" | "emitidas" | "suprimidas";
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -83,11 +109,16 @@ export default function NotasFiscaisPage() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabKey>("pendentes");
+  const [checkingStatus, setCheckingStatus] = useState<Set<string>>(new Set());
+  // Modal de erros de emissao — mostra TODAS as falhas (sem corte)
+  const [emissionErrors, setEmissionErrors] = useState<EmissionError[] | null>(null);
 
   async function fetchNotas() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/notas-fiscais?month=${month}`);
+      // cache: "no-store" evita ler dados stale apos emit/cancel/check-status
+      const res = await fetch(`/api/notas-fiscais?month=${month}`, { cache: "no-store" });
       if (res.ok) {
         const d = await res.json();
         setData(d);
@@ -106,6 +137,9 @@ export default function NotasFiscaisPage() {
     setSelected(new Set());
   }, [month]);
 
+  const isSpedy = (data?.provedor || "").toUpperCase() === "SPEDY";
+
+  // Aplica busca primeiro — contadores e tabs todos respeitam esse filtro
   const filteredNotas = (data?.notas || []).filter((n) => {
     if (!search) return true;
     const term = search.toLowerCase();
@@ -116,8 +150,24 @@ export default function NotasFiscaisPage() {
     );
   });
 
-  const pendentes = filteredNotas.filter((n) => !n.nfEmitida);
-  const emitidas = filteredNotas.filter((n) => n.nfEmitida);
+  // Owners com naoDeclaraImob nao geram NF — agrupados em tab separada
+  // pra ficar transparente o que esta sendo suprimido, mas nao poluem
+  // o fluxo de pendentes/emitidas.
+  const suprimidas = filteredNotas.filter((n) => n.naoDeclaraImob === true);
+  const ativas = filteredNotas.filter((n) => n.naoDeclaraImob !== true);
+
+  // Pendentes = sem invoice no banco OU invoice em estado nao-final (nao
+  // AUTORIZADA, nao REJEITADA, nao PROCESSANDO, nao CANCELADA). Tambem
+  // exclui marcadas manualmente como emitida.
+  const pendentes = ativas.filter(
+    (n) =>
+      !n.nfEmitida &&
+      n.invoiceStatus !== "REJEITADA" &&
+      n.invoiceStatus !== "PROCESSANDO"
+  );
+  const rejeitadas = ativas.filter((n) => n.invoiceStatus === "REJEITADA");
+  const processando = ativas.filter((n) => n.invoiceStatus === "PROCESSANDO");
+  const emitidas = ativas.filter((n) => n.nfEmitida);
 
   function toggleSelect(entryId: string) {
     setSelected((prev) => {
@@ -180,27 +230,94 @@ export default function NotasFiscaisPage() {
         toast.error(d.error || "Erro ao emitir NFs");
         return;
       }
-      const lines: string[] = [d.message];
-      if (d.mockMode) lines.push("⚠️ MODO MOCK ativo (sem integracao real)");
-      if (d.failed > 0) {
-        const errors = (d.results || [])
-          .filter((r: any) => !r.success)
-          .slice(0, 5)
-          .map((r: any) => `• ${r.ownerName}: ${r.error}`)
-          .join("\n");
-        lines.push("Falhas:\n" + errors);
+      if (d.mockMode) {
+        toast.warning("MODO MOCK ativo (sem integracao real)");
       }
+      const errors: EmissionError[] = (d.results || [])
+        .filter((r: { success?: boolean }) => !r.success)
+        .map((r: { ownerName?: string; error?: string }) => ({
+          ownerName: r.ownerName || "Desconhecido",
+          error: r.error || "Erro nao especificado",
+        }));
       if (d.success > 0) {
-        toast.success(lines.join(" — "));
-      } else {
-        toast.error(lines.join(" — "));
+        toast.success(d.message);
+      }
+      if (errors.length > 0) {
+        // Abre modal com TODOS os erros (sem corte) — antes era slice(0, 5)
+        setEmissionErrors(errors);
       }
       setSelected(new Set());
       fetchNotas();
-    } catch (e: any) {
-      toast.error(e?.message || "Erro ao emitir NFs");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Erro ao emitir NFs";
+      toast.error(msg);
     } finally {
       setActionLoading(false);
+    }
+  }
+
+  // Re-emite uma NF (retry apos rejeicao). Mesmo endpoint, apenas 1 entryId.
+  async function reemitirNF(entryId: string, ownerName: string) {
+    if (!confirm(`Tentar re-emitir a NF de ${ownerName}?`)) return;
+    setActionLoading(true);
+    try {
+      const res = await fetch("/api/invoices/emit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ownerEntryIds: [entryId] }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        toast.error(d.error || "Erro ao re-emitir NF");
+        return;
+      }
+      if (d.success > 0) {
+        toast.success(`NF de ${ownerName} re-enviada`);
+      } else {
+        const firstError = (d.results || []).find((r: { success?: boolean }) => !r.success);
+        toast.error(
+          firstError?.error
+            ? `Falha: ${firstError.error}`
+            : "Falha desconhecida ao re-emitir"
+        );
+      }
+      fetchNotas();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Erro ao re-emitir NF";
+      toast.error(msg);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  // Verifica status no provedor (util pra PROCESSANDO / REJEITADA com
+  // estado eventualmente atualizado via webhook fora do nosso fluxo).
+  async function verificarStatus(invoiceId: string) {
+    setCheckingStatus((prev) => new Set(prev).add(invoiceId));
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/check-status`, {
+        method: "POST",
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(d.error || "Erro ao verificar status");
+        return;
+      }
+      toast.success(
+        d.status
+          ? `Status atualizado: ${d.status}`
+          : "Status verificado"
+      );
+      fetchNotas();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Erro ao verificar status";
+      toast.error(msg);
+    } finally {
+      setCheckingStatus((prev) => {
+        const next = new Set(prev);
+        next.delete(invoiceId);
+        return next;
+      });
     }
   }
 
@@ -304,14 +421,17 @@ export default function NotasFiscaisPage() {
       <Header title="Notas Fiscais" subtitle="Controle de emissao de notas fiscais de taxa de administracao" />
 
       <div className="p-4 sm:p-6 space-y-4">
-        {/* Summary */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Summary — contadores derivados de filteredNotas pra condizer
+            com a tabela quando ha busca/filtro ativo. */}
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           <Card className="border-0 shadow-sm">
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-medium text-muted-foreground">Total NFs</p>
-                  <p className="text-2xl font-bold mt-1">{loading ? "..." : data?.total || 0}</p>
+                  <p className="text-2xl font-bold mt-1">
+                    {loading ? "..." : ativas.length}
+                  </p>
                 </div>
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100">
                   <FileText className="h-5 w-5 text-blue-600" />
@@ -324,7 +444,9 @@ export default function NotasFiscaisPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-medium text-muted-foreground">Pendentes</p>
-                  <p className="text-2xl font-bold mt-1">{loading ? "..." : data?.pendentes || 0}</p>
+                  <p className="text-2xl font-bold mt-1">
+                    {loading ? "..." : pendentes.length}
+                  </p>
                 </div>
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-yellow-100">
                   <Clock className="h-5 w-5 text-yellow-600" />
@@ -336,8 +458,40 @@ export default function NotasFiscaisPage() {
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
+                  <p className="text-xs font-medium text-muted-foreground">Rejeitadas</p>
+                  <p className="text-2xl font-bold mt-1 text-red-600">
+                    {loading ? "..." : rejeitadas.length}
+                  </p>
+                </div>
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-100">
+                  <AlertTriangle className="h-5 w-5 text-red-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Processando</p>
+                  <p className="text-2xl font-bold mt-1 text-amber-600">
+                    {loading ? "..." : processando.length}
+                  </p>
+                </div>
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100">
+                  <Loader2 className="h-5 w-5 text-amber-600 animate-spin" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between">
+                <div>
                   <p className="text-xs font-medium text-muted-foreground">Emitidas</p>
-                  <p className="text-2xl font-bold mt-1">{loading ? "..." : data?.emitidas || 0}</p>
+                  <p className="text-2xl font-bold mt-1">
+                    {loading ? "..." : emitidas.length}
+                  </p>
                 </div>
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100">
                   <CheckCircle2 className="h-5 w-5 text-emerald-600" />
@@ -436,6 +590,34 @@ export default function NotasFiscaisPage() {
               </div>
             </div>
 
+            {/* Tabs — pendentes / rejeitadas / processando / emitidas /
+                suprimidas. Tab "Suprimidas" so aparece se houver owner com
+                naoDeclaraImob. Tabs com 0 itens ainda aparecem (excepto
+                Suprimidas) pra preservar previsibilidade da navegacao. */}
+            <div className="px-4 py-2 border-b bg-slate-50">
+              <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="w-full">
+                <TabsList className="h-9">
+                  <TabsTrigger value="pendentes" className="text-xs h-8 px-3">
+                    Pendentes ({pendentes.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="rejeitadas" className="text-xs h-8 px-3">
+                    Rejeitadas ({rejeitadas.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="processando" className="text-xs h-8 px-3">
+                    Processando ({processando.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="emitidas" className="text-xs h-8 px-3">
+                    Emitidas ({emitidas.length})
+                  </TabsTrigger>
+                  {suprimidas.length > 0 && (
+                    <TabsTrigger value="suprimidas" className="text-xs h-8 px-3">
+                      Suprimidas ({suprimidas.length})
+                    </TabsTrigger>
+                  )}
+                </TabsList>
+              </Tabs>
+            </div>
+
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <p className="text-sm text-muted-foreground">Carregando...</p>
@@ -448,14 +630,15 @@ export default function NotasFiscaisPage() {
               </div>
             ) : (
               <>
-                {/* Pendentes */}
-                {pendentes.length > 0 && (
-                  <div>
-                    <div className="px-4 py-2 bg-yellow-50 border-b">
-                      <span className="text-xs font-semibold text-yellow-700">
-                        PENDENTES ({pendentes.length})
-                      </span>
+                {/* PENDENTES */}
+                {activeTab === "pendentes" && (
+                  pendentes.length === 0 ? (
+                    <div className="flex items-center justify-center py-12">
+                      <p className="text-sm text-muted-foreground">
+                        Nenhuma nota pendente.
+                      </p>
                     </div>
+                  ) : (
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -535,17 +718,163 @@ export default function NotasFiscaisPage() {
                         })}
                       </TableBody>
                     </Table>
-                  </div>
+                  )
                 )}
 
-                {/* Emitidas */}
-                {emitidas.length > 0 && (
-                  <div>
-                    <div className="px-4 py-2 bg-emerald-50 border-b border-t">
-                      <span className="text-xs font-semibold text-emerald-700">
-                        EMITIDAS ({emitidas.length})
-                      </span>
+                {/* REJEITADAS */}
+                {activeTab === "rejeitadas" && (
+                  rejeitadas.length === 0 ? (
+                    <div className="flex items-center justify-center py-12">
+                      <p className="text-sm text-muted-foreground">
+                        Nenhuma nota rejeitada.
+                      </p>
                     </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Proprietario</TableHead>
+                          <TableHead className="text-xs">Contrato</TableHead>
+                          <TableHead className="text-xs">Motivo da rejeicao</TableHead>
+                          <TableHead className="text-xs text-right">Valor NF</TableHead>
+                          <TableHead className="text-xs w-44"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {rejeitadas.map((n) => (
+                          <TableRow key={n.entryId}>
+                            <TableCell className="text-xs">
+                              <div className="font-medium">{n.owner.name}</div>
+                              <div className="text-muted-foreground text-[11px]">{n.owner.cpfCnpj}</div>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {n.contract?.code || "-"}
+                            </TableCell>
+                            <TableCell className="text-xs text-red-700 max-w-md">
+                              {n.rejeicaoCodigo && (
+                                <span className="font-mono text-[10px] bg-red-50 px-1.5 py-0.5 rounded mr-1.5">
+                                  {n.rejeicaoCodigo}
+                                </span>
+                              )}
+                              {n.rejeicaoMotivo || "Motivo nao informado"}
+                            </TableCell>
+                            <TableCell className="text-xs text-right font-semibold">
+                              {formatCurrency(n.adminFeeValue)}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1 flex-wrap justify-end">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-[11px] border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                                  onClick={() => reemitirNF(n.entryId, n.owner.name)}
+                                  disabled={actionLoading}
+                                  title="Re-emitir NF apos correcao"
+                                >
+                                  <RefreshCw className="h-3 w-3 mr-1" />
+                                  Tentar de novo
+                                </Button>
+                                {n.invoiceId && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-[11px]"
+                                    onClick={() => verificarStatus(n.invoiceId!)}
+                                    disabled={checkingStatus.has(n.invoiceId!)}
+                                    title="Consulta status atual no provedor"
+                                  >
+                                    {checkingStatus.has(n.invoiceId) ? (
+                                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="h-3 w-3 mr-1" />
+                                    )}
+                                    Verificar Status
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )
+                )}
+
+                {/* PROCESSANDO */}
+                {activeTab === "processando" && (
+                  processando.length === 0 ? (
+                    <div className="flex items-center justify-center py-12">
+                      <p className="text-sm text-muted-foreground">
+                        Nenhuma nota em processamento.
+                      </p>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Proprietario</TableHead>
+                          <TableHead className="text-xs">Contrato</TableHead>
+                          <TableHead className="text-xs">Status</TableHead>
+                          <TableHead className="text-xs text-right">Valor NF</TableHead>
+                          <TableHead className="text-xs w-44"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {processando.map((n) => (
+                          <TableRow key={n.entryId}>
+                            <TableCell className="text-xs">
+                              <div className="font-medium">{n.owner.name}</div>
+                              <div className="text-muted-foreground text-[11px]">{n.owner.cpfCnpj}</div>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {n.contract?.code || "-"}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              <div className="flex items-center gap-1.5 text-amber-700">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <span>Aguardando provedor</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-xs text-right font-semibold">
+                              {formatCurrency(n.adminFeeValue)}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1 justify-end">
+                                {n.invoiceId && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-[11px]"
+                                    onClick={() => verificarStatus(n.invoiceId!)}
+                                    disabled={checkingStatus.has(n.invoiceId!)}
+                                    title="Consulta status atual no provedor"
+                                  >
+                                    {checkingStatus.has(n.invoiceId) ? (
+                                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="h-3 w-3 mr-1" />
+                                    )}
+                                    Verificar Status
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )
+                )}
+
+                {/* EMITIDAS */}
+                {activeTab === "emitidas" && (
+                  emitidas.length === 0 ? (
+                    <div className="flex items-center justify-center py-12">
+                      <p className="text-sm text-muted-foreground">
+                        Nenhuma nota emitida.
+                      </p>
+                    </div>
+                  ) : (
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -557,87 +886,202 @@ export default function NotasFiscaisPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {emitidas.map((n) => (
-                          <TableRow key={n.entryId}>
+                        {emitidas.map((n) => {
+                          const showCancel =
+                            n.invoiceId &&
+                            n.invoiceStatus !== "CANCELADA" &&
+                            n.invoiceStatus === "AUTORIZADA";
+                          return (
+                            <TableRow key={n.entryId}>
+                              <TableCell className="text-xs">
+                                <div className="font-medium">{n.owner.name}</div>
+                                <div className="text-muted-foreground text-[11px]">{n.owner.cpfCnpj}</div>
+                              </TableCell>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {n.contract?.code || "-"}
+                              </TableCell>
+                              <TableCell className="text-xs text-right font-semibold">
+                                {formatCurrency(n.adminFeeValue)}
+                              </TableCell>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {n.nfData || "-"}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex gap-1 flex-wrap">
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-7 w-7"
+                                    onClick={() => imprimirIndividual(n.entryId)}
+                                    title="Imprimir NF"
+                                  >
+                                    <Printer className="h-3.5 w-3.5" />
+                                  </Button>
+                                  {n.invoiceId && (
+                                    <>
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-7 w-7"
+                                        onClick={() => baixarPdf(n.invoiceId!)}
+                                        title="Baixar PDF"
+                                      >
+                                        <Download className="h-3.5 w-3.5" />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 text-[11px] text-muted-foreground"
+                                        onClick={() => baixarXml(n.invoiceId!)}
+                                        title="Baixar XML"
+                                      >
+                                        XML
+                                      </Button>
+                                      {showCancel && (
+                                        isSpedy ? (
+                                          <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 text-[11px] text-muted-foreground hover:text-red-700"
+                                            onClick={() => cancelarNF(n.invoiceId!, n.owner.name)}
+                                            title="Cancelar NF na prefeitura"
+                                          >
+                                            Cancelar
+                                          </Button>
+                                        ) : (
+                                          <TooltipProvider>
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <span className="inline-block">
+                                                  <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="h-7 text-[11px] text-muted-foreground"
+                                                    disabled
+                                                  >
+                                                    Cancelar
+                                                  </Button>
+                                                </span>
+                                              </TooltipTrigger>
+                                              <TooltipContent>
+                                                Cancelamento automatico disponivel apenas
+                                                via SPEDY. Cancele direto no portal do
+                                                provedor ({data?.provedor || "atual"}).
+                                              </TooltipContent>
+                                            </Tooltip>
+                                          </TooltipProvider>
+                                        )
+                                      )}
+                                    </>
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 text-[11px] text-muted-foreground hover:text-amber-700"
+                                    onClick={() => reverterEmitida(n.entryId)}
+                                    title="Apenas remove marca local (nao cancela na prefeitura)"
+                                  >
+                                    Reverter
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  )
+                )}
+
+                {/* SUPRIMIDAS — owners com naoDeclaraImob. Apenas leitura,
+                    sem checkbox / acoes (nao geram NF por decisao do cliente). */}
+                {activeTab === "suprimidas" && (
+                  suprimidas.length === 0 ? (
+                    <div className="flex items-center justify-center py-12">
+                      <p className="text-sm text-muted-foreground">
+                        Nenhum proprietario com supressao de NF neste mes.
+                      </p>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Proprietario</TableHead>
+                          <TableHead className="text-xs">Contrato</TableHead>
+                          <TableHead className="text-xs text-right">Valor (suprimido)</TableHead>
+                          <TableHead className="text-xs">Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {suprimidas.map((n) => (
+                          <TableRow key={n.entryId} className="opacity-70">
                             <TableCell className="text-xs">
-                              <div className="font-medium">{n.owner.name}</div>
+                              <div className="font-medium flex items-center gap-1.5">
+                                <EyeOff className="h-3 w-3 text-muted-foreground" />
+                                {n.owner.name}
+                              </div>
                               <div className="text-muted-foreground text-[11px]">{n.owner.cpfCnpj}</div>
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground">
                               {n.contract?.code || "-"}
                             </TableCell>
-                            <TableCell className="text-xs text-right font-semibold">
+                            <TableCell className="text-xs text-right text-muted-foreground line-through">
                               {formatCurrency(n.adminFeeValue)}
                             </TableCell>
-                            <TableCell className="text-xs text-muted-foreground">
-                              {n.nfData || "-"}
-                            </TableCell>
                             <TableCell>
-                              <div className="flex gap-1 flex-wrap">
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-7 w-7"
-                                  onClick={() => imprimirIndividual(n.entryId)}
-                                  title="Imprimir NF"
-                                >
-                                  <Printer className="h-3.5 w-3.5" />
-                                </Button>
-                                {n.invoiceId && (
-                                  <>
-                                    <Button
-                                      size="icon"
-                                      variant="ghost"
-                                      className="h-7 w-7"
-                                      onClick={() => baixarPdf(n.invoiceId!)}
-                                      title="Baixar PDF"
-                                    >
-                                      <Download className="h-3.5 w-3.5" />
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-7 text-[11px] text-muted-foreground"
-                                      onClick={() => baixarXml(n.invoiceId!)}
-                                      title="Baixar XML"
-                                    >
-                                      XML
-                                    </Button>
-                                    {n.invoiceStatus !== "CANCELADA" && (
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        className="h-7 text-[11px] text-muted-foreground hover:text-red-700"
-                                        onClick={() => cancelarNF(n.invoiceId!, n.owner.name)}
-                                        title="Cancelar NF na prefeitura"
-                                      >
-                                        Cancelar
-                                      </Button>
-                                    )}
-                                  </>
-                                )}
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-7 text-[11px] text-muted-foreground hover:text-amber-700"
-                                  onClick={() => reverterEmitida(n.entryId)}
-                                  title="Apenas remove marca local (não cancela na prefeitura)"
-                                >
-                                  Reverter
-                                </Button>
-                              </div>
+                              <Badge variant="outline" className="text-[10px] bg-slate-100 text-slate-600 border-slate-300">
+                                Suprimida (nao declara imovel)
+                              </Badge>
                             </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
-                  </div>
+                  )
                 )}
               </>
             )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Modal: TODAS as falhas de emissao (substitui o slice(0, 5)
+          que escondia erros do usuario). */}
+      <Dialog
+        open={emissionErrors !== null}
+        onOpenChange={(open) => {
+          if (!open) setEmissionErrors(null);
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-600" />
+              Falhas na emissao
+            </DialogTitle>
+            <DialogDescription>
+              {emissionErrors?.length || 0} NF(s) nao foram emitidas. Revise os
+              motivos abaixo e corrija o que for necessario antes de tentar
+              novamente.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto space-y-2">
+            {emissionErrors?.map((err, idx) => (
+              <div
+                key={`${err.ownerName}-${idx}`}
+                className="rounded-md border border-red-200 bg-red-50 p-3"
+              >
+                <div className="text-xs font-semibold text-red-900">
+                  {err.ownerName}
+                </div>
+                <div className="text-xs text-red-700 mt-1 whitespace-pre-wrap break-words">
+                  {err.error}
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

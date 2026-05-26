@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
 
 /**
  * GET /api/notas-fiscais?month=YYYY-MM
@@ -34,12 +34,12 @@ export async function GET(request: NextRequest) {
     const entries = await prisma.ownerEntry.findMany({
       where: {
         type: "CREDITO",
-        category: { in: ["REPASSE", "GARANTIA"] },
+        category: { in: ["REPASSE", "GARANTIA", "INTERMEDIACAO"] },
         dueDate: { gte: monthStart, lte: monthEnd },
         status: { not: "CANCELADO" },
       },
       include: {
-        owner: { select: { id: true, name: true, cpfCnpj: true } },
+        owner: { select: { id: true, name: true, cpfCnpj: true, naoDeclaraImob: true } },
       },
       orderBy: [{ owner: { name: "asc" } }, { createdAt: "asc" }],
     });
@@ -93,6 +93,13 @@ export async function GET(request: NextRequest) {
     const nfEmitidas: Record<string, { emitida: boolean; numero?: string; data?: string }> =
       nfSetting ? JSON.parse(nfSetting.value) : {};
 
+    // Buscar provedor das FiscalSettings (singleton). Usado no payload pra
+    // UI decidir se botoes de cancelar/re-emitir devem estar habilitados.
+    const fiscalSettings = await prisma.fiscalSettings.findFirst({
+      select: { provedor: true },
+    });
+    const provedor = fiscalSettings?.provedor || null;
+
     // Buscar Invoices ja persistidas (vinculadas via ownerEntryId) — fornece
     // invoiceId/status real do banco pra UI chamar cancel/download.
     const ownerEntryIds = entries.map((e) => e.id);
@@ -107,6 +114,8 @@ export async function GET(request: NextRequest) {
             chaveAcesso: true,
             pdfUrl: true,
             dataEmissao: true,
+            rejeicaoCodigo: true,
+            rejeicaoMotivo: true,
           },
         })
       : [];
@@ -160,12 +169,25 @@ export async function GET(request: NextRequest) {
 
       const nfStatus = nfEmitidas[entry.id] || { emitida: false };
       const inv = invoiceByEntry.get(entry.id);
-      // Considera emitida se: marcada no AppSetting OU tem Invoice AUTORIZADA no banco
-      const realmenteEmitida = nfStatus.emitida || inv?.status === "AUTORIZADA";
+      // nfEmitida = bandeira "marcado como emitido na UI" (inclui marcacao
+      // manual via PATCH OU Invoice AUTORIZADA no banco). Mantida pra
+      // compat e pra populacao da tab "Emitidas".
+      const nfEmitida = nfStatus.emitida || inv?.status === "AUTORIZADA";
+      // realmenteEmitida = SOMENTE Invoice AUTORIZADA no banco. Usado pra
+      // distinguir "emitida real" de "marcada manualmente" / "rejeitada" /
+      // "em processamento" — UI precisa diferenciar essas pra mostrar
+      // tabs separadas e acoes corretas (retry, check-status).
+      const realmenteEmitida = inv?.status === "AUTORIZADA";
 
       return {
         entryId: entry.id,
-        owner: entry.owner,
+        owner: {
+          id: entry.owner.id,
+          name: entry.owner.name,
+          cpfCnpj: entry.owner.cpfCnpj,
+        },
+        // Bandeira pra UI suprimir owners que nao declaram imovel
+        naoDeclaraImob: entry.owner.naoDeclaraImob,
         contract,
         aluguelBruto,              // aluguel liquido (com desconto) x % do proprietario
         aluguelBrutoOriginal: Math.round(aluguelBrutoTotal * 100) / 100,
@@ -174,25 +196,40 @@ export async function GET(request: NextRequest) {
         adminFeePercent,
         adminFeeValue,             // taxa sobre aluguel liquido x % do proprietario
         repasseValue: entry.value,
-        nfEmitida: realmenteEmitida,
+        nfEmitida,
+        realmenteEmitida,
         nfNumero: nfStatus.numero || inv?.numero || "",
         nfData: nfStatus.data || (inv?.dataEmissao ? inv.dataEmissao.toISOString() : ""),
-        // Novos campos pra UI chamar cancel/download
+        // Novos campos pra UI chamar cancel/download/retry/check-status
         invoiceId: inv?.id || null,
-        invoiceStatus: inv?.status || null,
+        invoiceStatus: inv?.status || null, // PENDENTE | PROCESSANDO | AUTORIZADA | REJEITADA | CANCELADA | null
         invoicePdfUrl: inv?.pdfUrl || null,
+        rejeicaoCodigo: inv?.rejeicaoCodigo || null,
+        rejeicaoMotivo: inv?.rejeicaoMotivo || null,
       };
     });
 
     const totalAdminFee = notas.reduce((s, n) => s + n.adminFeeValue, 0);
     const totalEmitidas = notas.filter((n) => n.nfEmitida).length;
+    const totalRejeitadas = notas.filter((n) => n.invoiceStatus === "REJEITADA").length;
+    const totalProcessando = notas.filter((n) => n.invoiceStatus === "PROCESSANDO").length;
+    // Pendentes = nao emitida, nao rejeitada, nao em processamento
+    const totalPendentes = notas.filter(
+      (n) =>
+        !n.nfEmitida &&
+        n.invoiceStatus !== "REJEITADA" &&
+        n.invoiceStatus !== "PROCESSANDO"
+    ).length;
 
     return NextResponse.json({
       month: mLabel,
       total: notas.length,
       emitidas: totalEmitidas,
-      pendentes: notas.length - totalEmitidas,
+      pendentes: totalPendentes,
+      rejeitadas: totalRejeitadas,
+      processando: totalProcessando,
       totalAdminFee: Math.round(totalAdminFee * 100) / 100,
+      provedor,
       notas,
     });
   } catch (error) {
@@ -210,7 +247,9 @@ export async function GET(request: NextRequest) {
  * Body: { month: "YYYY-MM", entryIds: string[], emitida: boolean, numero?: string }
  */
 export async function PATCH(request: NextRequest) {
-  const auth = await requireAuth();
+  // Requer permissao da pagina "notas-fiscais" pra mutar marcacao de
+  // emissao — evita usuario sem acesso burlar via fetch direto.
+  const auth = await requirePagePermission("notas-fiscais");
   if (isAuthError(auth)) return auth;
 
   try {

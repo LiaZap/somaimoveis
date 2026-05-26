@@ -92,15 +92,37 @@ export async function POST(
   try {
     const result = await cancelarNFSeSpedy(ambiente, apiKey, spedyId, justification);
 
+    // FIX: respeita o status retornado pela Spedy. Cancelamento nem sempre
+    // e imediato — depende da prefeitura. Estados conhecidos:
+    //   canceled / cancellation_succeeded  -> CANCELADA definitiva
+    //   cancellation_request_succeeded     -> requisicao aceita mas pode levar
+    //                                          tempo (Sao Paulo cancela em batch).
+    //                                          Trata como PROCESSANDO ate webhook /
+    //                                          check-status confirmar.
+    //   <qualquer outro / processing_*>    -> PROCESSANDO (em andamento)
+    // Antes: marcava CANCELADA sempre, mesmo quando a Spedy ainda estava
+    // tramitando o pedido — UI mostrava cancelada mas a nota ainda existia.
+    const statusSpedy = String((result as any)?.status || "").toLowerCase();
+    const ehCancelDefinitivo =
+      statusSpedy === "canceled" ||
+      statusSpedy === "cancelled" ||
+      statusSpedy === "cancellation_succeeded";
+    const novoStatus = ehCancelDefinitivo ? "CANCELADA" : "PROCESSANDO";
+
     await prisma.invoice.update({
       where: { id: invoice.id },
       data: {
-        status: "CANCELADA",
+        status: novoStatus,
         respostaXml: JSON.stringify(result),
+        cancelamentoMotivo: justification,
+        // dataCancelamento so quando o cancel e definitivo. Se a Spedy ainda
+        // estiver tramitando, deixamos null pro webhook/check-status preencher
+        // quando confirmar.
+        ...(ehCancelDefinitivo ? { dataCancelamento: new Date() } : {}),
       },
     });
 
-    return NextResponse.json({ ok: true, result });
+    return NextResponse.json({ ok: true, status: novoStatus, result });
   } catch (e: unknown) {
     const err = e as { status?: number; message?: string; body?: unknown };
     console.error("[Invoice Cancel] Spedy:", err);

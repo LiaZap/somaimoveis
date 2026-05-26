@@ -94,6 +94,12 @@ export async function getAliquotaParaCompetencia(
     };
   }
 
+  console.warn(
+    `[fiscal-aliquota] Aliquota DEFAULT 2% usada — nenhuma alíquota mensal nem global configurada. ` +
+    `Competência solicitada: ${ano}/${mes}. ` +
+    `Configure em /configuracoes/fiscal pra evitar surpresas fiscais.`
+  );
+
   return {
     aliquotaIss: DEFAULT_ALIQUOTA,
     simplesAliquota: null,

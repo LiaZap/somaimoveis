@@ -43,6 +43,7 @@ interface SpedyWebhookEvent {
     authorization?: { date?: string; protocol?: string };
     processingDetail?: { status?: string; message?: string | null; code?: string | null };
     integrationId?: string;
+    amount?: number | null;
   };
 }
 
@@ -75,6 +76,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Body invalido" }, { status: 400 });
   }
 
+  // Fix #1: rejeita eventos que nao sejam invoice.status_changed
+  // (aceita se `event` nao vier — compat com payloads minimalistas)
+  if (payload.event && payload.event !== "invoice.status_changed") {
+    return NextResponse.json({
+      ok: true,
+      ignored: `event nao tratado: ${payload.event}`,
+    });
+  }
+
   const data = payload.data || {};
   const spedyId = data.id;
   const newStatus = data.status;
@@ -88,28 +98,66 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, ignored: "sem data.status" });
   }
 
-  // Localiza Invoice — tentativa 1: chaveAcesso = spedyId (padrao da nossa emit)
+  // Fix #2: filtra por ambiente pra nao misturar HOMOLOGACAO/PRODUCAO
+  const settings = await prisma.fiscalSettings.findFirst();
+  const ambiente = (settings?.ambiente || "HOMOLOGACAO").toUpperCase();
+
+  // Localiza Invoice — tentativa 1: chaveAcesso = spedyId + ambiente
   let invoice = await prisma.invoice.findFirst({
-    where: { chaveAcesso: spedyId },
+    where: { chaveAcesso: spedyId, ambiente },
     select: { id: true, status: true },
   });
 
-  // Tentativa 2: via integrationId (que e o ownerEntryId)
+  // Fix #5: tentativa 2 via integrationId só atualiza Invoice SEM chaveAcesso
+  // (evita sobrescrever match definitivo)
   if (!invoice && data.integrationId) {
     invoice = await prisma.invoice.findFirst({
-      where: { ownerEntryId: data.integrationId },
+      where: {
+        ownerEntryId: { endsWith: data.integrationId },
+        chaveAcesso: null,
+        ambiente,
+      },
       select: { id: true, status: true },
     });
   }
 
   if (!invoice) {
-    console.warn(`[Webhook Spedy] Invoice nao encontrada pra spedyId=${spedyId}`);
-    // Retorna 200 mesmo assim pra Spedy nao reenviar — pode ser nota emitida
-    // antes da nossa integracao
-    return NextResponse.json({ ok: true, ignored: "invoice nao encontrada" });
+    // Fix #3: schema obriga ownerId em Invoice. Criar Invoice orfa exigiria
+    // inventar Owner placeholder (polui dados) ou tornar FK opcional (mudanca
+    // de schema fora do escopo). Decisao: 500 + log completo pra investigacao
+    // manual. Spedy reenviara (segundo docs), entao admin tem janela pra
+    // criar a Invoice correspondente antes do retry.
+    console.error(
+      `[Webhook Spedy] spedyId=${spedyId} desconhecido em ambiente=${ambiente}. ` +
+        `Payload completo:`,
+      JSON.stringify(payload)
+    );
+    return NextResponse.json(
+      {
+        error:
+          "spedyId desconhecido e ownerId obrigatorio — investigar manualmente",
+        spedyId,
+        ambiente,
+      },
+      { status: 500 }
+    );
   }
 
   const invoiceStatus = mapSpedyStatusToInvoiceStatus(newStatus);
+
+  // Fix #4: rejeita transicoes invalidas (estados finais nao retrocedem)
+  if (invoice.status === "AUTORIZADA" && invoiceStatus === "PROCESSANDO") {
+    return NextResponse.json({
+      ok: true,
+      ignored: "AUTORIZADA nao volta pra PROCESSANDO",
+    });
+  }
+  if (invoice.status === "CANCELADA" && invoiceStatus !== "CANCELADA") {
+    return NextResponse.json({
+      ok: true,
+      ignored: "CANCELADA eh estado final",
+    });
+  }
 
   const updateData: {
     status: string;

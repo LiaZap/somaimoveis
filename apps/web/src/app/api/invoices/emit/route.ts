@@ -161,7 +161,24 @@ export async function POST(request: NextRequest) {
 
   const ibge = getIbgeCode(settings.city || "", settings.state || "RS");
 
-  for (const entry of entries) {
+  // Reserva uma faixa de numeros de DPS de forma atomica.
+  // Antes: cada iteracao fazia findFirst({ orderBy: createdAt }) e somava 1,
+  // o que pegava o mesmo numero quando 2 emissoes rodavam concorrentes
+  // (race condition) ou quando uma emissao em lote registrava a invoice
+  // depois do proximo loop ja ter lido o "lastInvoice".
+  // Agora: 1 update atomico no comeco reserva [start..start+N-1] e cada
+  // entry usa start+i. Se uma emissao falhar, o numero "fica queimado"
+  // (gap), o que e aceitavel — a SEFIN permite gaps na sequencia DPS.
+  const reservedCounter = await prisma.fiscalSettings.update({
+    where: { id: settings.id },
+    data: { nextNfDpsNumero: { increment: ownerEntryIds.length } },
+    select: { nextNfDpsNumero: true },
+  });
+  const startNumero = reservedCounter.nextNfDpsNumero - ownerEntryIds.length + 1;
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const nextNumeroDps = startNumero + i;
     // Pula se ja tem NF emitida
     if (entry.invoice && entry.invoice.status === "AUTORIZADA") {
       results.push({
@@ -229,14 +246,38 @@ export async function POST(request: NextRequest) {
       settings.simplesAliquota,
     );
 
-    // Numero sequencial da DPS — usa o proximo disponivel no banco
-    const lastInvoice = await prisma.invoice.findFirst({
-      orderBy: { createdAt: "desc" },
-      select: { numero: true },
-    });
-    const nextNumeroDps = lastInvoice?.numero
-      ? parseInt(lastInvoice.numero) + 1
-      : 1;
+    // nextNumeroDps ja foi reservado atomicamente acima do loop (vide
+    // FiscalSettings.nextNfDpsNumero). Garante sequencia sem race.
+
+    // Discriminacao reaproveitada nos dois caminhos (Spedy + Gov) e nos
+    // upserts de Invoice (PROCESSANDO/REJEITADA/AUTORIZADA).
+    const discriminacao = `Taxa de administracao imobiliaria${entry.contract ? ` ref. contrato ${entry.contract.code}` : ""}${competencia ? ` - competencia ${competencia}` : ""}`;
+    // Dados base do Invoice (campos NOT NULL) — usados em todos os upserts
+    // do ciclo dessa entry (PROCESSANDO, REJEITADA, AUTORIZADA).
+    const invoiceBase = {
+      prestadorCnpj: settings.cnpj.replace(/\D/g, ""),
+      prestadorIm: settings.inscricaoMunicipal,
+      prestadorNome: settings.razaoSocial || "SOMMA IMOVEIS LTDA",
+      tomadorTipo,
+      tomadorDoc,
+      tomadorNome: entry.owner.name,
+      tomadorEmail: entry.owner.email,
+      codigoServico: settings.codigoServicoMunicipal,
+      discriminacao,
+      valorServicos: adminFeeValue,
+      aliquotaIss: aliqEfetiva.aliquotaIss,
+      valorIss: settings.retemIss
+        ? Math.round(adminFeeValue * aliqEfetiva.aliquotaIss / 100 * 100) / 100
+        : 0,
+      issRetido: settings.retemIss,
+      regimeTributario: settings.regimeTributario,
+      ownerId: entry.owner.id,
+      contractId: entry.contractId,
+      ownerEntryId: entry.id,
+      competencia,
+      ambiente,
+      createdById: auth.user.id,
+    } as const;
 
     try {
       let result: {
@@ -255,12 +296,16 @@ export async function POST(request: NextRequest) {
 
       if (isSpedy) {
         // ===== Provedor SPEDY =====
-        const discriminacao = `Taxa de administracao imobiliaria${entry.contract ? ` ref. contrato ${entry.contract.code}` : ""}${competencia ? ` - competencia ${competencia}` : ""}`;
         const aliquota = aliqEfetiva.aliquotaIss / 100; // decimal (usa MENSAL > GLOBAL > 2%)
         const issAmount = Math.round(adminFeeValue * aliquota * 100) / 100;
         const tomadorEnderecoCidade = ibge
           ? { code: ibge, name: entry.owner.city || "", state: entry.owner.state || "RS" }
           : { code: "4316808", name: "Santa Cruz do Sul", state: "RS" };
+
+        // integrationId tem que ser unico por tentativa pra Spedy nao
+        // rejeitar com "ja existe nota com esse integrationId" em reemissoes.
+        // Schema: <30 chars do entry.id>-<5 chars timestamp base36>. Total <=36.
+        const integrationId = `${entry.id.slice(0, 30)}-${Date.now().toString(36).slice(-5)}`;
 
         try {
           const created = await emitirNFSeSpedy({
@@ -273,7 +318,7 @@ export async function POST(request: NextRequest) {
               federalServiceCode: settings.codigoServicoMunicipal || "1.05",
               cityServiceCode: settings.codigoServicoMunicipal || undefined,
               taxationType: "taxationInMunicipality",
-              integrationId: entry.id.slice(-36),
+              integrationId,
               receiver: {
                 name: entry.owner.name,
                 federalTaxNumber: tomadorDoc,
@@ -295,6 +340,28 @@ export async function POST(request: NextRequest) {
                 issAmount,
                 issWithheld: !!settings.retemIss,
               },
+            },
+          });
+
+          // FIX: persiste Invoice como PROCESSANDO ANTES do polling.
+          // Antes: invoice so era criada apos polling terminar — webhook
+          // chegando no meio do polling tentava update sem find e perdia
+          // o evento. Agora o registro ja existe com chaveAcesso=spedyId
+          // assim que o POST cria o recurso na Spedy.
+          await prisma.invoice.upsert({
+            where: { ownerEntryId: entry.id },
+            create: {
+              ...invoiceBase,
+              status: "PROCESSANDO",
+              chaveAcesso: created.id,
+              respostaXml: JSON.stringify(created),
+            },
+            update: {
+              status: "PROCESSANDO",
+              chaveAcesso: created.id,
+              respostaXml: JSON.stringify(created),
+              rejeicaoCodigo: null,
+              rejeicaoMotivo: null,
             },
           });
 
@@ -324,6 +391,7 @@ export async function POST(request: NextRequest) {
               sucesso: false,
               rejeicaoCodigo: final.processingDetail?.code || final.status,
               rejeicaoMotivo: final.processingDetail?.message || `Status final: ${final.status}`,
+              chaveAcesso: final.id, // mantem id pra cancel/check-status acharem o recurso
               spedyId: final.id,
               xmlRetorno: JSON.stringify(final),
             };
@@ -381,7 +449,7 @@ export async function POST(request: NextRequest) {
         },
         servico: {
           codigoServico: settings.codigoServicoMunicipal,
-          discriminacao: `Taxa de administracao imobiliaria${entry.contract ? ` ref. contrato ${entry.contract.code}` : ""}${competencia ? ` - competencia ${competencia}` : ""}`,
+          discriminacao,
           valorServicos: adminFeeValue,
           aliquotaIss: aliqEfetiva.aliquotaIss,
           issRetido: settings.retemIss,
@@ -393,6 +461,37 @@ export async function POST(request: NextRequest) {
       }
 
       if (!result.sucesso) {
+        // FIX: persiste Invoice como REJEITADA em vez de descartar.
+        // Antes: a falha so era reportada no array de results e a Invoice
+        // sumia do banco — operador nao via histo na tela de notas.
+        // Agora grava (ou atualiza, no caso Spedy onde ja existe como
+        // PROCESSANDO) com status REJEITADA + codigo/motivo.
+        try {
+          await prisma.invoice.upsert({
+            where: { ownerEntryId: entry.id },
+            create: {
+              ...invoiceBase,
+              status: "REJEITADA",
+              chaveAcesso: result.chaveAcesso,
+              dpsXml: result.dpsXml,
+              respostaXml: result.xmlRetorno,
+              rejeicaoCodigo: result.rejeicaoCodigo,
+              rejeicaoMotivo: result.rejeicaoMotivo,
+            },
+            update: {
+              status: "REJEITADA",
+              chaveAcesso: result.chaveAcesso,
+              dpsXml: result.dpsXml,
+              respostaXml: result.xmlRetorno,
+              rejeicaoCodigo: result.rejeicaoCodigo,
+              rejeicaoMotivo: result.rejeicaoMotivo,
+            },
+          });
+        } catch (persistErr) {
+          // Nao deixa erro de persistencia mascarar a falha original
+          console.error(`[Invoice Emit] Falha ao persistir REJEITADA entry ${entry.id}:`, persistErr);
+        }
+
         results.push({
           ownerEntryId: entry.id,
           ownerName: entry.owner.name,
@@ -403,39 +502,23 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Cria registro Invoice no banco (ou atualiza se ja existe)
+      // Cria registro Invoice no banco (ou atualiza se ja existe).
+      // No caminho Spedy, ja foi criado como PROCESSANDO antes do polling
+      // — o upsert aqui atualiza pra AUTORIZADA com os dados finais.
+      // No caminho NFSE_NACIONAL e a 1a vez (sem update intermediario).
       const invoice = await prisma.invoice.upsert({
         where: { ownerEntryId: entry.id },
         create: {
+          ...invoiceBase,
           numero: result.numero,
           serie: result.serie,
           codigoVerificacao: result.codigoVerificacao,
           chaveAcesso: result.chaveAcesso,
           status: "AUTORIZADA",
           dataEmissao: new Date(),
-          prestadorCnpj: settings.cnpj.replace(/\D/g, ""),
-          prestadorIm: settings.inscricaoMunicipal,
-          prestadorNome: settings.razaoSocial || "SOMMA IMOVEIS LTDA",
-          tomadorTipo,
-          tomadorDoc,
-          tomadorNome: entry.owner.name,
-          tomadorEmail: entry.owner.email,
-          codigoServico: settings.codigoServicoMunicipal,
-          discriminacao: `Taxa de administracao imobiliaria${entry.contract ? ` ref. contrato ${entry.contract.code}` : ""}${competencia ? ` - competencia ${competencia}` : ""}`,
-          valorServicos: adminFeeValue,
-          aliquotaIss: aliqEfetiva.aliquotaIss,
-          valorIss: settings.retemIss ? Math.round(adminFeeValue * aliqEfetiva.aliquotaIss / 100 * 100) / 100 : 0,
-          issRetido: settings.retemIss,
-          regimeTributario: settings.regimeTributario,
           dpsXml: result.dpsXml,
           respostaXml: result.xmlRetorno,
           pdfUrl: result.pdfUrl,
-          ownerId: entry.owner.id,
-          contractId: entry.contractId,
-          ownerEntryId: entry.id,
-          competencia,
-          ambiente,
-          createdById: auth.user.id,
         },
         update: {
           numero: result.numero,
@@ -461,6 +544,27 @@ export async function POST(request: NextRequest) {
       });
     } catch (err: any) {
       console.error(`[Invoice Emit] Erro na entry ${entry.id}:`, err);
+      // Persiste falha inesperada como REJEITADA tb (com codigo EXC pra
+      // distinguir da rejeicao "normal" vinda do provedor).
+      try {
+        await prisma.invoice.upsert({
+          where: { ownerEntryId: entry.id },
+          create: {
+            ...invoiceBase,
+            status: "REJEITADA",
+            rejeicaoCodigo: "EXC",
+            rejeicaoMotivo: err?.message || "Erro desconhecido",
+          },
+          update: {
+            status: "REJEITADA",
+            rejeicaoCodigo: "EXC",
+            rejeicaoMotivo: err?.message || "Erro desconhecido",
+          },
+        });
+      } catch (persistErr) {
+        console.error(`[Invoice Emit] Falha ao persistir excecao entry ${entry.id}:`, persistErr);
+      }
+
       results.push({
         ownerEntryId: entry.id,
         ownerName: entry.owner.name,
