@@ -59,6 +59,27 @@ export interface SpedyTotalData {
   unconditionalDiscountAmount?: number;
 }
 
+export interface SpedyIbsCbsAddress {
+  street: string;
+  number: string;
+  complement?: string;
+  district: string;
+  postalCode: string;
+  city: { name: string; state: string };
+  country: string; // "BR"
+}
+
+export interface SpedyIbsCbs {
+  cst: number;                       // ex: 200
+  classification: number;            // ex: 200046
+  operationIndicatorCode: string;    // ex: "020301" (relacionado a imovel)
+  isPersonalUse: boolean;
+  operationType: string;             // ex: "supplyWithSubsequentPayment"
+  property?: {
+    address: SpedyIbsCbsAddress;
+  };
+}
+
 export interface SpedyServiceInvoiceBody {
   effectiveDate: string; // ISO YYYY-MM-DDTHH:mm:ss
   status?: "enqueued"; // sempre enqueued na criacao
@@ -71,6 +92,7 @@ export interface SpedyServiceInvoiceBody {
   total: SpedyTotalData;
   integrationId?: string; // idempotencia (max 36 chars)
   additionalInformation?: string;
+  ibsCbs?: SpedyIbsCbs;  // Reforma Tributaria LC 214/2025
 }
 
 export interface SpedyServiceInvoiceResponse {
