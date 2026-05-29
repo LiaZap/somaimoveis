@@ -1412,13 +1412,13 @@ export default function NotasFiscaisPage() {
         open={auditReport !== null}
         onOpenChange={(open) => { if (!open) { setAuditReport(null); setAutoLinkResult(null); } }}
       >
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+        <DialogContent className="!max-w-[1400px] w-[95vw] max-h-[92vh] overflow-hidden flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-5 pb-4 border-b bg-muted/30">
+            <DialogTitle className="flex items-center gap-2 text-base">
               <ShieldCheck className="h-5 w-5 text-amber-600" />
               Pré-validação de Notas — {auditReport ? formatMonthLabel(auditReport.summary.month) : ""}
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs">
               Relatório dry-run agrupado por (contrato, mês). Revise antes de emitir.
             </DialogDescription>
           </DialogHeader>
@@ -1426,118 +1426,190 @@ export default function NotasFiscaisPage() {
           {auditReport && (
             <>
               {/* Summary cards */}
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-2 shrink-0">
-                <div className="rounded-md border bg-emerald-50 border-emerald-200 p-2">
-                  <div className="text-[10px] text-emerald-700">Prontos pra emitir</div>
-                  <div className="text-lg font-semibold text-emerald-900">{auditReport.summary.totalCanEmit}</div>
-                  <div className="text-[10px] text-emerald-600">{formatCurrency(auditReport.summary.valorTotalAEmitir)}</div>
-                </div>
-                <div className="rounded-md border bg-blue-50 border-blue-200 p-2">
-                  <div className="text-[10px] text-blue-700">📄 Emitidas</div>
-                  <div className="text-lg font-semibold text-blue-900">{auditReport.summary.totalJaEmitidas || 0}</div>
-                  <div className="text-[10px] text-blue-600">{formatCurrency(auditReport.summary.valorTotalJaEmitidas || 0)}</div>
-                </div>
-                <div className="rounded-md border bg-red-50 border-red-200 p-2">
-                  <div className="text-[10px] text-red-700">Bloqueados</div>
-                  <div className="text-lg font-semibold text-red-900">{auditReport.summary.totalBloqueados}</div>
-                  <div className="text-[10px] text-red-600">{formatCurrency(auditReport.summary.valorTotalBloqueado)}</div>
-                </div>
-                <div className="rounded-md border bg-amber-50 border-amber-200 p-2">
-                  <div className="text-[10px] text-amber-700">Com avisos</div>
-                  <div className="text-lg font-semibold text-amber-900">{auditReport.summary.totalComAvisos}</div>
-                </div>
-                <div className="rounded-md border bg-gray-50 border-gray-200 p-2">
-                  <div className="text-[10px] text-gray-600">Suprimidos</div>
-                  <div className="text-lg font-semibold text-gray-900">{auditReport.summary.totalSuprimidos}</div>
-                  <div className="text-[10px] text-gray-500">naoDeclaraImob</div>
-                </div>
-                <div className="rounded-md border bg-violet-50 border-violet-200 p-2">
-                  <div className="text-[10px] text-violet-700">Re-emissões</div>
-                  <div className="text-lg font-semibold text-violet-900">{auditReport.summary.totalReEmissao}</div>
-                  <div className="text-[10px] text-violet-600">canceladas/rejeitadas</div>
+              <div className="px-6 py-4 border-b bg-background">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="rounded-lg border bg-emerald-50/60 border-emerald-200 px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-700 font-medium mb-1">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Prontos
+                    </div>
+                    <div className="text-2xl font-bold text-emerald-900 leading-none">{auditReport.summary.totalCanEmit}</div>
+                    <div className="text-[11px] text-emerald-700 mt-1.5 tabular-nums">{formatCurrency(auditReport.summary.valorTotalAEmitir)}</div>
+                  </div>
+                  <div className="rounded-lg border bg-blue-50/60 border-blue-200 px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-xs text-blue-700 font-medium mb-1">
+                      <FileText className="h-3.5 w-3.5" />
+                      Emitidas
+                    </div>
+                    <div className="text-2xl font-bold text-blue-900 leading-none">{auditReport.summary.totalJaEmitidas || 0}</div>
+                    <div className="text-[11px] text-blue-700 mt-1.5 tabular-nums">{formatCurrency(auditReport.summary.valorTotalJaEmitidas || 0)}</div>
+                  </div>
+                  <div className="rounded-lg border bg-red-50/60 border-red-200 px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-xs text-red-700 font-medium mb-1">
+                      <XCircle className="h-3.5 w-3.5" />
+                      Bloqueados
+                    </div>
+                    <div className="text-2xl font-bold text-red-900 leading-none">{auditReport.summary.totalBloqueados}</div>
+                    <div className="text-[11px] text-red-700 mt-1.5 tabular-nums">{formatCurrency(auditReport.summary.valorTotalBloqueado)}</div>
+                  </div>
+                  <div className="rounded-lg border bg-amber-50/60 border-amber-200 px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-xs text-amber-700 font-medium mb-1">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Avisos
+                    </div>
+                    <div className="text-2xl font-bold text-amber-900 leading-none">{auditReport.summary.totalComAvisos}</div>
+                    <div className="text-[11px] text-amber-700/70 mt-1.5">precisam atenção</div>
+                  </div>
+                  <div className="rounded-lg border bg-gray-50/60 border-gray-200 px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-xs text-gray-600 font-medium mb-1">
+                      <EyeOff className="h-3.5 w-3.5" />
+                      Suprimidos
+                    </div>
+                    <div className="text-2xl font-bold text-gray-700 leading-none">{auditReport.summary.totalSuprimidos}</div>
+                    <div className="text-[11px] text-gray-500 mt-1.5">não declaram</div>
+                  </div>
+                  <div className="rounded-lg border bg-violet-50/60 border-violet-200 px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-xs text-violet-700 font-medium mb-1">
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Re-emissões
+                    </div>
+                    <div className="text-2xl font-bold text-violet-900 leading-none">{auditReport.summary.totalReEmissao}</div>
+                    <div className="text-[11px] text-violet-700/70 mt-1.5">após cancel/rejeição</div>
+                  </div>
                 </div>
               </div>
 
-              {/* Top owners */}
+              {/* Top owners — scroll horizontal pra evitar quebra */}
               {auditReport.summary.porOwner.length > 0 && (
-                <div className="border rounded-md p-2 bg-muted/30 shrink-0">
-                  <div className="text-xs font-medium text-muted-foreground mb-1.5">
-                    Por proprietário (top 5 por valor):
+                <div className="px-6 py-3 border-b bg-muted/20 shrink-0">
+                  <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-2">
+                    <DollarSign className="h-3.5 w-3.5" />
+                    Top proprietários por valor
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-2 text-xs">
-                    {auditReport.summary.porOwner.slice(0, 5).map((o) => (
-                      <div key={o.ownerId} className="flex items-center justify-between gap-2 bg-background border rounded px-2 py-1">
-                        <span className="truncate">{o.ownerName}</span>
-                        <span className="text-muted-foreground tabular-nums whitespace-nowrap">
-                          {o.qtdNotas}× {formatCurrency(o.valorTotal)}
-                          {o.qtdBloqueados > 0 && <span className="text-red-600 ml-1">({o.qtdBloqueados}🚫)</span>}
-                        </span>
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {auditReport.summary.porOwner.slice(0, 8).map((o) => (
+                      <div
+                        key={o.ownerId}
+                        className="shrink-0 bg-background border rounded-md px-3 py-2 min-w-[180px]"
+                      >
+                        <div className="text-xs font-medium truncate max-w-[220px]" title={o.ownerName}>
+                          {o.ownerName}
+                        </div>
+                        <div className="flex items-center justify-between gap-2 mt-1">
+                          <span className="text-[11px] text-muted-foreground">
+                            {o.qtdNotas} {o.qtdNotas === 1 ? "nota" : "notas"}
+                          </span>
+                          <span className="text-xs font-semibold tabular-nums">
+                            {formatCurrency(o.valorTotal)}
+                          </span>
+                        </div>
+                        {o.qtdBloqueados > 0 && (
+                          <div className="text-[10px] text-red-600 mt-0.5">
+                            {o.qtdBloqueados} bloqueado{o.qtdBloqueados > 1 ? "s" : ""}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Filtros + acoes em massa */}
-              <div className="flex gap-1 shrink-0 flex-wrap items-center">
-                {(["todos", "bloqueados", "avisos", "ok", "emitidas"] as const).map((f) => (
-                  <Button
-                    key={f}
-                    size="sm"
-                    variant={auditFilter === f ? "default" : "outline"}
-                    className="h-7 text-xs"
-                    onClick={() => setAuditFilter(f)}
-                  >
-                    {f === "todos" ? `Todos (${auditReport.items.length})`
-                      : f === "bloqueados" ? `🔴 Bloqueados (${auditReport.summary.totalBloqueados})`
-                      : f === "avisos" ? `🟡 Com avisos (${auditReport.summary.totalComAvisos})`
-                      : f === "ok" ? `✅ OK (${auditReport.summary.totalCanEmit - auditReport.summary.totalComAvisos})`
-                      : `📄 Emitidas (${auditReport.summary.totalJaEmitidas || 0})`}
-                  </Button>
-                ))}
+              {/* Toolbar: filtros + ação massiva */}
+              <div className="px-6 py-3 border-b bg-background flex items-center gap-2 flex-wrap shrink-0">
+                <div className="flex gap-1">
+                  {(["todos", "ok", "avisos", "bloqueados", "emitidas"] as const).map((f) => {
+                    const counts: Record<typeof f, number> = {
+                      todos: auditReport.items.length,
+                      ok: auditReport.summary.totalCanEmit - auditReport.summary.totalComAvisos,
+                      avisos: auditReport.summary.totalComAvisos,
+                      bloqueados: auditReport.summary.totalBloqueados,
+                      emitidas: auditReport.summary.totalJaEmitidas || 0,
+                    };
+                    const labels: Record<typeof f, string> = {
+                      todos: "Todos",
+                      ok: "OK",
+                      avisos: "Avisos",
+                      bloqueados: "Bloqueados",
+                      emitidas: "Emitidas",
+                    };
+                    const colors: Record<typeof f, string> = {
+                      todos: "",
+                      ok: "data-[active=true]:bg-emerald-600 data-[active=true]:text-white",
+                      avisos: "data-[active=true]:bg-amber-600 data-[active=true]:text-white",
+                      bloqueados: "data-[active=true]:bg-red-600 data-[active=true]:text-white",
+                      emitidas: "data-[active=true]:bg-blue-600 data-[active=true]:text-white",
+                    };
+                    return (
+                      <Button
+                        key={f}
+                        size="sm"
+                        data-active={auditFilter === f}
+                        variant={auditFilter === f ? "default" : "outline"}
+                        className={`h-8 text-xs gap-1.5 ${colors[f]}`}
+                        onClick={() => setAuditFilter(f)}
+                      >
+                        <span>{labels[f]}</span>
+                        <span className={`px-1.5 py-0 rounded text-[10px] tabular-nums ${
+                          auditFilter === f ? "bg-white/20" : "bg-muted text-muted-foreground"
+                        }`}>
+                          {counts[f]}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
                 <div className="ml-auto" />
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="h-7 text-xs gap-1 border-emerald-400 text-emerald-700 hover:bg-emerald-50"
+                  className="h-8 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
                   onClick={autoLinkContratos}
                   disabled={auditLoading}
-                  title="Tenta vincular contratos automaticamente em entries sem contractId (codigo no description, property, owner unico, valor proximo)"
+                  title="Tenta vincular contratos automaticamente em entries sem contractId"
                 >
                   {auditLoading
                     ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     : <CheckCircle2 className="h-3.5 w-3.5" />}
-                  Vincular contratos automaticamente
+                  Vincular contratos
                 </Button>
               </div>
 
               {/* Painel: resultado do ultimo auto-link (vinculados, ambiguos, pulados) */}
               {autoLinkResult && (
-                <details className="border rounded-md bg-muted/30 text-xs shrink-0" open>
-                  <summary className="cursor-pointer px-3 py-2 flex items-center gap-2">
+                <details className="mx-6 mt-3 border rounded-md bg-muted/30 text-xs shrink-0" open>
+                  <summary className="cursor-pointer px-4 py-2.5 flex items-center gap-3 hover:bg-muted/50 transition-colors">
                     <span className="font-medium">📋 Último auto-link:</span>
-                    <span className="text-emerald-700">✅ {autoLinkResult.summary.vinculados} vinculados</span>
-                    {autoLinkResult.summary.ambiguos > 0 && (
-                      <span className="text-amber-700">⚠️ {autoLinkResult.summary.ambiguos} ambíguos</span>
-                    )}
-                    {autoLinkResult.summary.pulados > 0 && (
-                      <span className="text-red-700">⏭️ {autoLinkResult.summary.pulados} pulados</span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1 text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full text-[11px]">
+                        <CheckCircle2 className="h-3 w-3" /> {autoLinkResult.summary.vinculados} vinculados
+                      </span>
+                      {autoLinkResult.summary.ambiguos > 0 && (
+                        <span className="flex items-center gap-1 text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full text-[11px]">
+                          <AlertTriangle className="h-3 w-3" /> {autoLinkResult.summary.ambiguos} ambíguos
+                        </span>
+                      )}
+                      {autoLinkResult.summary.pulados > 0 && (
+                        <span className="flex items-center gap-1 text-red-700 bg-red-100 px-2 py-0.5 rounded-full text-[11px]">
+                          <XCircle className="h-3 w-3" /> {autoLinkResult.summary.pulados} pulados
+                        </span>
+                      )}
+                    </div>
                     <button
                       type="button"
-                      className="ml-auto text-muted-foreground hover:text-foreground text-[10px]"
+                      className="ml-auto text-muted-foreground hover:text-foreground text-[11px]"
                       onClick={(e) => { e.preventDefault(); setAutoLinkResult(null); }}
                     >
                       Fechar
                     </button>
                   </summary>
-                  <div className="px-3 pb-2 space-y-2 max-h-[200px] overflow-y-auto">
+                  <div className="px-4 pb-3 pt-1 space-y-3 max-h-[200px] overflow-y-auto">
                     {autoLinkResult.summary.ambiguos > 0 && (
                       <div>
-                        <div className="font-medium text-amber-700 mb-1">Ambíguos (vincule manualmente abaixo):</div>
-                        <ul className="space-y-0.5">
+                        <div className="font-medium text-amber-700 mb-1.5 text-[11px]">
+                          Ambíguos — vincule manualmente nos cards abaixo:
+                        </div>
+                        <ul className="space-y-1 text-[11px]">
                           {autoLinkResult.ambiguos.slice(0, 20).map((a, idx) => (
-                            <li key={idx} className="text-[11px]">
+                            <li key={idx} className="bg-amber-50/40 rounded px-2 py-1">
                               <strong>{a.ownerName}</strong> — {a.reason}
                               {a.candidates && a.candidates.length > 0 && (
                                 <span className="text-muted-foreground"> · {a.candidates.map((c) => c.code).join(", ")}</span>
@@ -1549,15 +1621,17 @@ export default function NotasFiscaisPage() {
                     )}
                     {autoLinkResult.summary.pulados > 0 && (
                       <div>
-                        <div className="font-medium text-red-700 mb-1">Pulados:</div>
-                        <ul className="space-y-0.5">
+                        <div className="font-medium text-red-700 mb-1.5 text-[11px]">
+                          Pulados — owner sem contrato cadastrado:
+                        </div>
+                        <ul className="space-y-1 text-[11px]">
                           {autoLinkResult.pulados.slice(0, 20).map((p, idx) => (
-                            <li key={idx} className="text-[11px]">
+                            <li key={idx} className="bg-red-50/40 rounded px-2 py-1">
                               <strong>{p.ownerName}</strong> — {p.reason}
                             </li>
                           ))}
                           {autoLinkResult.pulados.length > 20 && (
-                            <li className="text-[11px] text-muted-foreground">
+                            <li className="text-muted-foreground italic px-2">
                               ...e mais {autoLinkResult.pulados.length - 20}
                             </li>
                           )}
@@ -1569,7 +1643,7 @@ export default function NotasFiscaisPage() {
               )}
 
               {/* Lista de itens */}
-              <div className="overflow-y-auto flex-1 space-y-2 pr-1">
+              <div className="overflow-y-auto flex-1 space-y-3 px-6 py-4 bg-muted/10">
                 {auditReport.items
                   .filter((i) => {
                     if (auditFilter === "todos") return true;
@@ -1581,12 +1655,19 @@ export default function NotasFiscaisPage() {
                   })
                   .map((i) => {
                     const borderColor = i.jaEmitida
-                      ? "border-blue-300 bg-blue-50/40"
+                      ? "border-blue-200 bg-white"
                       : !i.canEmit
-                      ? "border-red-300 bg-red-50/50"
+                      ? "border-red-200 bg-white"
                       : i.hasWarnings
-                      ? "border-amber-300 bg-amber-50/50"
-                      : "border-emerald-300 bg-emerald-50/50";
+                      ? "border-amber-200 bg-white"
+                      : "border-emerald-200 bg-white";
+                    const accentColor = i.jaEmitida
+                      ? "bg-blue-500"
+                      : !i.canEmit
+                      ? "bg-red-500"
+                      : i.hasWarnings
+                      ? "bg-amber-500"
+                      : "bg-emerald-500";
                     const statusIcon = i.jaEmitida
                       ? <FileText className="h-4 w-4 text-blue-600" />
                       : !i.canEmit
@@ -1596,15 +1677,25 @@ export default function NotasFiscaisPage() {
                       : <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
                     const itemKey = `${i.contractId || "null"}-${(i.entryIds || []).join("_")}-${i.ano}-${i.mes}-${i.ownerId}`;
                     return (
-                      <div key={itemKey} className={`border rounded-md p-3 ${borderColor}`}>
-                        <div className="flex items-start justify-between gap-3">
+                      <div key={itemKey} className={`border rounded-lg overflow-hidden shadow-sm ${borderColor}`}>
+                        {/* Accent bar lateral */}
+                        <div className="flex">
+                          <div className={`w-1 shrink-0 ${accentColor}`} />
+                          <div className="flex-1 p-4">
+                        <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 text-sm font-medium">
+                            <div className="flex items-center gap-2 text-sm">
                               {statusIcon}
-                              <span className="truncate">{i.ownerName}</span>
-                              <span className="text-xs text-muted-foreground font-normal">
-                                · {i.contractCode || "(sem contrato)"}
-                              </span>
+                              <span className="font-semibold text-foreground truncate">{i.ownerName}</span>
+                              {i.contractCode ? (
+                                <Badge variant="outline" className="text-[10px] h-5 font-mono">
+                                  {i.contractCode}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px] h-5 border-amber-300 text-amber-700 bg-amber-50">
+                                  sem contrato
+                                </Badge>
+                              )}
                               {i.isCoproprietario && (
                                 <Badge
                                   variant="outline"
@@ -1614,44 +1705,60 @@ export default function NotasFiscaisPage() {
                                   Coprop {i.sharePercent}%
                                 </Badge>
                               )}
+                              {i.jaEmitida && i.invoiceExistente?.numero && (
+                                <Badge variant="outline" className="text-[10px] h-5 border-blue-300 text-blue-700 bg-blue-50">
+                                  NF #{i.invoiceExistente.numero}
+                                </Badge>
+                              )}
                             </div>
-                            <div className="text-xs text-muted-foreground mt-1 grid grid-cols-1 md:grid-cols-2 gap-x-3">
-                              <div>
-                                <strong>CPF/CNPJ:</strong>{" "}
-                                {i.ownerCpfCnpjValido
-                                  ? i.ownerCpfCnpj
-                                  : <span className="text-red-600">{i.ownerCpfCnpj || "(vazio)"} ⚠️</span>}
-                              </div>
-                              <div>
-                                <strong>Alíquota:</strong> {i.aliquotaIss.toFixed(2)}%{" "}
-                                <span className="text-[10px]">
-                                  ({i.aliquotaIssOrigem}
-                                  {i.aliquotaCompetenciaUsada && i.aliquotaIssOrigem === "ANTERIOR" && ` ${i.aliquotaCompetenciaUsada}`})
+
+                            {/* Meta info grid */}
+                            <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                              <div className="flex gap-2">
+                                <span className="text-muted-foreground min-w-[68px]">CPF/CNPJ:</span>
+                                <span className={i.ownerCpfCnpjValido ? "font-medium" : "text-red-600 font-medium"}>
+                                  {i.ownerCpfCnpj || "(vazio)"}
+                                  {!i.ownerCpfCnpjValido && " ⚠️"}
                                 </span>
                               </div>
-                              <div className="md:col-span-2 truncate">
-                                <strong>Imóvel:</strong>{" "}
-                                {i.propertyAddress || <span className="text-amber-600">(sem property — ibsCbs omitido)</span>}
+                              <div className="flex gap-2">
+                                <span className="text-muted-foreground min-w-[68px]">Alíquota:</span>
+                                <span className="font-medium">{i.aliquotaIss.toFixed(2).replace(".", ",")}%</span>
+                                <span className="text-[10px] text-muted-foreground">
+                                  ({i.aliquotaIssOrigem}{i.aliquotaCompetenciaUsada && i.aliquotaIssOrigem === "ANTERIOR" && ` · ${i.aliquotaCompetenciaUsada}`})
+                                </span>
                               </div>
-                              <div>
-                                <strong>Origem valor:</strong>{" "}
-                                <span className="text-[10px]">{i.valorOrigem}</span>
+                              <div className="flex gap-2 md:col-span-2 min-w-0">
+                                <span className="text-muted-foreground min-w-[68px] shrink-0">Imóvel:</span>
+                                {i.propertyAddress ? (
+                                  <span className="font-medium truncate" title={i.propertyAddress}>{i.propertyAddress}</span>
+                                ) : (
+                                  <span className="text-amber-600 font-medium">⚠️ sem imóvel — ibsCbs omitido</span>
+                                )}
                               </div>
-                              {i.invoiceExistente && (
-                                <div>
-                                  <strong>NF anterior:</strong>{" "}
-                                  #{i.invoiceExistente.numero || "?"} ({i.invoiceExistente.status})
+                              <div className="flex gap-2">
+                                <span className="text-muted-foreground min-w-[68px]">Origem valor:</span>
+                                <span className="font-mono text-[10px] uppercase bg-muted px-1.5 py-0.5 rounded">
+                                  {i.valorOrigem}
+                                </span>
+                              </div>
+                              {i.invoiceExistente && !i.jaEmitida && (
+                                <div className="flex gap-2">
+                                  <span className="text-muted-foreground min-w-[68px]">NF anterior:</span>
+                                  <span className="font-medium">
+                                    #{i.invoiceExistente.numero || "?"} ({i.invoiceExistente.status})
+                                  </span>
                                 </div>
                               )}
                             </div>
                           </div>
-                          <div className="text-right shrink-0">
-                            <div className="text-lg font-semibold tabular-nums">
+                          <div className="text-right shrink-0 border-l pl-4">
+                            <div className="text-xs text-muted-foreground uppercase tracking-wide">Valor NF</div>
+                            <div className="text-2xl font-bold tabular-nums leading-tight mt-0.5">
                               {formatCurrency(i.valorNF)}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">Valor NF</div>
                             {i.valorOrigem === "MANUAL_OVERRIDE" && (
-                              <div className="text-[10px] text-emerald-600 mt-0.5">✏️ manual</div>
+                              <div className="text-[10px] text-emerald-600 mt-0.5 font-medium">✏️ valor manual</div>
                             )}
                           </div>
                         </div>
@@ -1839,9 +1946,25 @@ export default function NotasFiscaisPage() {
                             ))}
                           </div>
                         )}
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
+                  {/* Empty state */}
+                  {auditReport.items.filter((i) => {
+                    if (auditFilter === "todos") return true;
+                    if (auditFilter === "emitidas") return i.jaEmitida === true;
+                    if (auditFilter === "bloqueados") return !i.canEmit && !i.jaEmitida && !i.naoDeclaraImob;
+                    if (auditFilter === "avisos") return i.canEmit && i.hasWarnings;
+                    if (auditFilter === "ok") return i.canEmit && !i.hasWarnings;
+                    return true;
+                  }).length === 0 && (
+                    <div className="text-center py-16 text-muted-foreground">
+                      <div className="text-4xl mb-3">🎉</div>
+                      <div className="text-sm">Nenhum item nesta categoria</div>
+                    </div>
+                  )}
               </div>
             </>
           )}
