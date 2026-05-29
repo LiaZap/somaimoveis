@@ -133,8 +133,12 @@ interface AuditItem {
     propertyAddress: string | null;
   }>;
   entryIds?: string[];
+  propertyId?: string | null;
   propertyAddress: string | null;
   propertyEnderecoCompleto: boolean;
+  propertyOrigem?: "OVERRIDE" | "CONTRACT" | "ENTRY_DIRECT" | "OWNER_UNIQUE" | "MISSING";
+  availableProperties?: Array<{ id: string; address: string; type: string }>;
+  ownerEnderecoCepValido?: boolean;
   sharePercent?: number;
   isCoproprietario?: boolean;
   valorNF: number;
@@ -273,6 +277,32 @@ export default function NotasFiscaisPage() {
         return;
       }
       toast.success(`Contrato vinculado em ${entryIds.length} entry(ies)`);
+      await preValidarNotas();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setSavingOverride(null);
+    }
+  }
+
+  async function salvarOverrideProperty(item: AuditItem, propertyId: string | null) {
+    const key = auditGroupKey(item);
+    setSavingOverride(key);
+    try {
+      const res = await fetch("/api/invoices/preview-audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          month,
+          propertyOverrides: { [key]: propertyId },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Erro");
+        return;
+      }
+      toast.success(propertyId ? "Imóvel vinculado" : "Vínculo de imóvel removido");
       await preValidarNotas();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro");
@@ -1031,6 +1061,16 @@ export default function NotasFiscaisPage() {
                                     Verificar Status
                                   </Button>
                                 )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+                                  onClick={() => reverterEmitida(n.entryId)}
+                                  disabled={actionLoading}
+                                  title="Move a nota de volta pra Pendentes. Util pra vincular contrato/imovel antes de tentar emitir de novo. Nao afeta a prefeitura."
+                                >
+                                  Voltar pra pendente
+                                </Button>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1097,6 +1137,16 @@ export default function NotasFiscaisPage() {
                                     Verificar Status
                                   </Button>
                                 )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+                                  onClick={() => reverterEmitida(n.entryId)}
+                                  disabled={actionLoading}
+                                  title="Cancela o processamento local e volta pra Pendentes. Nao afeta a prefeitura."
+                                >
+                                  Voltar pra pendente
+                                </Button>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1689,6 +1739,50 @@ export default function NotasFiscaisPage() {
                             </Button>
                           )}
                         </div>
+
+                        {/* Vincular imovel — quando property nao foi resolvida
+                            e ha imoveis ATIVOS do owner */}
+                        {(!i.propertyId || i.propertyOrigem === "MISSING") && i.availableProperties && i.availableProperties.length > 0 && (
+                          <div className="mt-2 rounded border bg-orange-50/50 border-orange-200 p-2 text-xs">
+                            <div className="font-medium text-orange-900 mb-1.5">
+                              🏠 Sem imóvel resolvido (E0932 certo) — escolha o imóvel deste proprietário:
+                            </div>
+                            <div className="space-y-1">
+                              {i.availableProperties.map((p) => (
+                                <div key={p.id} className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] truncate flex-1">
+                                    <span className="text-muted-foreground">[{p.type}]</span> {p.address}
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-6 text-[10px] px-2"
+                                    disabled={savingOverride === auditGroupKey(i)}
+                                    onClick={() => salvarOverrideProperty(i, p.id)}
+                                  >
+                                    {savingOverride === auditGroupKey(i)
+                                      ? <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                                      : "Vincular"}
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Property override ativa? Mostra link pra remover */}
+                        {i.propertyOrigem === "OVERRIDE" && (
+                          <div className="mt-1 text-[10px] flex items-center gap-2">
+                            <span className="text-emerald-700">🏠 Imóvel manual: {i.propertyAddress}</span>
+                            <button
+                              type="button"
+                              className="text-red-600 underline"
+                              onClick={() => salvarOverrideProperty(i, null)}
+                            >
+                              Remover override
+                            </button>
+                          </div>
+                        )}
 
                         {/* Vincular contrato — quando entry esta sem contrato
                             e ha contratos ATIVOS disponiveis no owner */}

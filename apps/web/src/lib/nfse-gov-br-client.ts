@@ -435,8 +435,80 @@ export const IBGE_CODES_RS: Record<string, string> = {
   "NOVO HAMBURGO": "4313409",
 };
 
+// Mapeamento Cidade -> IBGE por UF (capitais e principais cidades de cada
+// estado). Necessario quando o TOMADOR esta em outro estado — antes
+// mandavamos sempre o IBGE da Somma (SC do Sul/RS) o que disparava E0240.
+// Quando cidade nao esta mapeada, retornamos null e omitimos address.
+const IBGE_CODES_BR: Record<string, Record<string, string>> = {
+  AC: { "RIO BRANCO": "1200401" },
+  AL: { "MACEIO": "2704302" },
+  AP: { "MACAPA": "1600303" },
+  AM: { "MANAUS": "1302603" },
+  BA: { "SALVADOR": "2927408", "FEIRA DE SANTANA": "2910800" },
+  CE: { "FORTALEZA": "2304400" },
+  DF: { "BRASILIA": "5300108" },
+  ES: { "VITORIA": "3205309", "VILA VELHA": "3205200", "SERRA": "3205002", "CARIACICA": "3201308" },
+  GO: { "GOIANIA": "5208707", "ANAPOLIS": "5201108" },
+  MA: { "SAO LUIS": "2111300" },
+  MT: { "CUIABA": "5103403", "VARZEA GRANDE": "5108402" },
+  MS: { "CAMPO GRANDE": "5002704" },
+  MG: {
+    "BELO HORIZONTE": "3106200", "UBERLANDIA": "3170206",
+    "CONTAGEM": "3118601", "JUIZ DE FORA": "3136702", "BETIM": "3106705",
+  },
+  PA: { "BELEM": "1501402" },
+  PB: { "JOAO PESSOA": "2507507", "CAMPINA GRANDE": "2504009" },
+  PR: {
+    "CURITIBA": "4106902", "LONDRINA": "4113700", "MARINGA": "4115200",
+    "PONTA GROSSA": "4119905", "CASCAVEL": "4104808", "FOZ DO IGUACU": "4108304",
+  },
+  PE: { "RECIFE": "2611606", "JABOATAO DOS GUARARAPES": "2607901", "OLINDA": "2609600" },
+  PI: { "TERESINA": "2211001" },
+  RJ: {
+    "RIO DE JANEIRO": "3304557", "NITEROI": "3303302",
+    "SAO GONCALO": "3304904", "DUQUE DE CAXIAS": "3301702",
+    "NOVA IGUACU": "3303500", "CAMPOS DOS GOYTACAZES": "3301009",
+    "PETROPOLIS": "3303906", "VOLTA REDONDA": "3306305",
+  },
+  RN: { "NATAL": "2408102" },
+  RS: IBGE_CODES_RS,
+  RO: { "PORTO VELHO": "1100205" },
+  RR: { "BOA VISTA": "1400100" },
+  SC: {
+    "FLORIANOPOLIS": "4205407", "JOINVILLE": "4209102", "BLUMENAU": "4202404",
+    "CHAPECO": "4204202", "ITAJAI": "4208203", "CRICIUMA": "4204608",
+    "LAGES": "4209300", "BALNEARIO CAMBORIU": "4202008", "SAO JOSE": "4216602",
+  },
+  SP: {
+    "SAO PAULO": "3550308", "GUARULHOS": "3518800", "CAMPINAS": "3509502",
+    "SAO BERNARDO DO CAMPO": "3548708", "SANTO ANDRE": "3547809",
+    "OSASCO": "3534401", "SAO JOSE DOS CAMPOS": "3549904",
+    "RIBEIRAO PRETO": "3543402", "SOROCABA": "3552205",
+    "SANTOS": "3548500", "MAUA": "3529401", "SAO JOSE DO RIO PRETO": "3549805",
+    "MOGI DAS CRUZES": "3530607", "DIADEMA": "3513801", "JUNDIAI": "3525904",
+    "PIRACICABA": "3538709", "CARAPICUIBA": "3510609", "BAURU": "3506003",
+    "ITAQUAQUECETUBA": "3523107", "SAO VICENTE": "3551009",
+    "FRANCA": "3516200", "GUARUJA": "3518701", "TABOAO DA SERRA": "3552502",
+  },
+  SE: { "ARACAJU": "2800308" },
+  TO: { "PALMAS": "1721000" },
+};
+
+function normCity(city: string): string {
+  return city
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, ""); // remove acentos
+}
+
 export function getIbgeCode(city: string, state: string): string | null {
-  if (state.toUpperCase() !== "RS") return null;
-  const key = city.toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-  return IBGE_CODES_RS[key] || null;
+  if (!city || !state) return null;
+  const uf = state.toUpperCase();
+  const key = normCity(city);
+  // 1. Tabela do estado especifico
+  const stateMap = IBGE_CODES_BR[uf];
+  if (stateMap && stateMap[key]) return stateMap[key];
+  // 2. Fallback: tabela RS (compat com codigo antigo que so tinha RS)
+  if (uf === "RS" && IBGE_CODES_RS[key]) return IBGE_CODES_RS[key];
+  return null;
 }
