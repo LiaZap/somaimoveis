@@ -126,6 +126,13 @@ interface AuditItem {
   naoDeclaraImob: boolean;
   contractCode: string | null;
   contractStatus: string | null;
+  availableContracts?: Array<{
+    id: string;
+    code: string;
+    status: string;
+    propertyAddress: string | null;
+  }>;
+  entryIds?: string[];
   propertyAddress: string | null;
   propertyEnderecoCompleto: boolean;
   sharePercent?: number;
@@ -202,6 +209,38 @@ export default function NotasFiscaisPage() {
 
   function auditGroupKey(i: AuditItem): string {
     return `${i.contractId || "NULL"}_${i.ano}-${String(i.mes).padStart(2, "0")}_${i.ownerId}`;
+  }
+
+  async function vincularContrato(item: AuditItem, contractId: string) {
+    const entryIds = item.entryIds || [];
+    if (entryIds.length === 0) {
+      toast.error("Sem entryIds pra vincular");
+      return;
+    }
+    setSavingOverride(auditGroupKey(item));
+    try {
+      // PATCH em cada entry do grupo (REPASSE + INTERMEDIACAO juntos)
+      const results = await Promise.all(
+        entryIds.map((id) =>
+          fetch(`/api/owner-entries/${id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contractId }),
+          })
+        )
+      );
+      const erros = results.filter((r) => !r.ok);
+      if (erros.length > 0) {
+        toast.error(`${erros.length}/${entryIds.length} entries falharam ao vincular`);
+        return;
+      }
+      toast.success(`Contrato vinculado em ${entryIds.length} entry(ies)`);
+      await preValidarNotas();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setSavingOverride(null);
+    }
   }
 
   async function salvarOverrideValor(item: AuditItem, novoValor: number | null) {
@@ -1529,6 +1568,39 @@ export default function NotasFiscaisPage() {
                             </Button>
                           )}
                         </div>
+
+                        {/* Vincular contrato — quando entry esta sem contrato
+                            e ha contratos ATIVOS disponiveis no owner */}
+                        {!i.contractCode && i.availableContracts && i.availableContracts.length > 0 && (
+                          <div className="mt-2 rounded border bg-amber-50/50 border-amber-200 p-2 text-xs">
+                            <div className="font-medium text-amber-900 mb-1.5">
+                              ⚠️ Sem contrato vinculado — escolha um contrato ATIVO deste proprietário:
+                            </div>
+                            <div className="space-y-1">
+                              {i.availableContracts.map((c) => (
+                                <div key={c.id} className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] truncate flex-1">
+                                    <strong>{c.code}</strong>{" "}
+                                    <span className="text-muted-foreground">
+                                      ({c.status}) {c.propertyAddress ? `· ${c.propertyAddress}` : ""}
+                                    </span>
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-6 text-[10px] px-2"
+                                    disabled={savingOverride === auditGroupKey(i)}
+                                    onClick={() => vincularContrato(i, c.id)}
+                                  >
+                                    {savingOverride === auditGroupKey(i)
+                                      ? <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                                      : "Vincular"}
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Validações */}
                         {i.validations.length > 0 && (

@@ -493,6 +493,86 @@ export async function POST(request: NextRequest) {
           ? new Date(entry.dueDate.getFullYear(), entry.dueDate.getMonth() + 1, 0, 12, 0, 0)
           : new Date();
 
+        // === Resolve PROPERTY para ibsCbs (cascata) ===
+        // A Spedy/Padrao Nacional EXIGE bloco property no ibsCbs quando o
+        // servico eh imobiliario (LC 10.05) e Reforma Tributaria esta ON.
+        // Sem isso, erro E0932. Cascata de fontes:
+        //   1. Override manual (AppSetting nf_property_override_YYYY_MM)
+        //   2. entry.contract.property (via contractId join)
+        //   3. entry.propertyId direto (caso vinculado sem contract)
+        //   4. Property unica do owner (se o owner tem so 1 imovel)
+        type PropertyForNF = {
+          street: string | null;
+          number: string | null;
+          complement?: string | null;
+          neighborhood: string | null;
+          city: string | null;
+          state: string | null;
+          zipCode: string | null;
+        };
+        let propertyForNF: PropertyForNF | null = entry.contract?.property
+          ? entry.contract.property
+          : null;
+        let propertyOrigin = propertyForNF ? "CONTRACT" : null;
+
+        // 1. Property override do AppSetting
+        if (entry.dueDate) {
+          const py = entry.dueDate.getFullYear();
+          const pm = entry.dueDate.getMonth() + 1;
+          const propOverrideKey = `nf_property_override_${py}_${String(pm).padStart(2, "0")}`;
+          const groupKey = `${entry.contractId || "NULL"}_${py}-${String(pm).padStart(2, "0")}_${entry.ownerId}`;
+          const propOverrideSetting = await prisma.appSetting.findUnique({ where: { key: propOverrideKey } });
+          if (propOverrideSetting) {
+            try {
+              const overrides: Record<string, string> = JSON.parse(propOverrideSetting.value);
+              const overridePropertyId = overrides[groupKey];
+              if (overridePropertyId) {
+                const overrideProperty = await prisma.property.findUnique({
+                  where: { id: overridePropertyId },
+                  select: {
+                    street: true, number: true, complement: true,
+                    neighborhood: true, city: true, state: true, zipCode: true,
+                  },
+                });
+                if (overrideProperty) {
+                  propertyForNF = overrideProperty;
+                  propertyOrigin = "OVERRIDE";
+                }
+              }
+            } catch { /* ignore */ }
+          }
+        }
+
+        // 2. entry.propertyId direto
+        if (!propertyForNF && entry.propertyId) {
+          const direct = await prisma.property.findUnique({
+            where: { id: entry.propertyId },
+            select: {
+              street: true, number: true, complement: true,
+              neighborhood: true, city: true, state: true, zipCode: true,
+            },
+          });
+          if (direct) { propertyForNF = direct; propertyOrigin = "ENTRY_DIRECT"; }
+        }
+
+        // 3. Owner com apenas 1 propriedade
+        if (!propertyForNF) {
+          const ownerProperties = await prisma.property.findMany({
+            where: { ownerId: entry.ownerId, active: true },
+            select: {
+              id: true, street: true, number: true, complement: true,
+              neighborhood: true, city: true, state: true, zipCode: true,
+            },
+            take: 2,
+          });
+          if (ownerProperties.length === 1) {
+            propertyForNF = ownerProperties[0];
+            propertyOrigin = "OWNER_UNIQUE";
+          }
+        }
+
+        void propertyOrigin; // future: log/expor em result
+
         try {
           const created = await emitirNFSeSpedy({
             ambiente: ambiente as SpedyAmbiente,
@@ -535,7 +615,7 @@ export async function POST(request: NextRequest) {
               // esta ON e o servico eh imobiliario (LC 10.05). Sem isso,
               // erro E0932: "obrigatorio grupo de informacoes do imovel".
               // Property vem do Contract.property associado a esta entry.
-              ibsCbs: entry.contract?.property ? {
+              ibsCbs: propertyForNF ? {
                 cst: 200,
                 classification: 200046,
                 operationIndicatorCode: "020301",
@@ -543,14 +623,14 @@ export async function POST(request: NextRequest) {
                 operationType: "supplyWithSubsequentPayment",
                 property: {
                   address: {
-                    street: entry.contract.property.street,
-                    number: entry.contract.property.number || "S/N",
-                    complement: entry.contract.property.complement || undefined,
-                    district: entry.contract.property.neighborhood || "Centro",
-                    postalCode: (entry.contract.property.zipCode || "").replace(/\D/g, ""),
+                    street: propertyForNF.street || "",
+                    number: propertyForNF.number || "S/N",
+                    complement: propertyForNF.complement || undefined,
+                    district: propertyForNF.neighborhood || "Centro",
+                    postalCode: (propertyForNF.zipCode || "").replace(/\D/g, ""),
                     city: {
-                      name: entry.contract.property.city || "Santa Cruz do Sul",
-                      state: entry.contract.property.state || "RS",
+                      name: propertyForNF.city || "Santa Cruz do Sul",
+                      state: propertyForNF.state || "RS",
                     },
                     country: "BR",
                   },

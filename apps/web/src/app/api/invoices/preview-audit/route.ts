@@ -46,6 +46,19 @@ interface AuditItem {
   contractCode: string | null;
   contractStatus: string | null;
 
+  // contratos ATIVOS deste owner disponiveis pra vincular (quando entry esta
+  // sem contrato e o usuario quer corrigir antes de emitir)
+  availableContracts: Array<{
+    id: string;
+    code: string;
+    status: string;
+    propertyAddress: string | null;
+  }>;
+
+  // IDs dos OwnerEntries que originam essa NF (pra UI conseguir PATCH
+  // contractId pra todos ao vincular)
+  entryIds: string[];
+
   // dados do imóvel (ibsCbs.property)
   propertyId: string | null;
   propertyAddress: string | null;
@@ -239,6 +252,28 @@ export async function GET(request: NextRequest) {
       })
     : [];
   const contractMap = new Map(contracts.map((c) => [c.id, c]));
+
+  // Pre-carrega TODOS os contratos ATIVOS dos owners (pra UI mostrar como
+  // opcoes quando o entry esta sem contrato vinculado).
+  const ownerIdsForContracts = [...new Set(entries.map((e) => e.ownerId))];
+  const availableContractsAll = ownerIdsForContracts.length > 0
+    ? await prisma.contract.findMany({
+        where: {
+          ownerId: { in: ownerIdsForContracts },
+          status: { in: ["ATIVO", "PENDENTE_RENOVACAO"] },
+        },
+        select: {
+          id: true, code: true, status: true, ownerId: true,
+          property: { select: { id: true, street: true, number: true, city: true } },
+        },
+      })
+    : [];
+  const availableContractsByOwner = new Map<string, typeof availableContractsAll>();
+  for (const c of availableContractsAll) {
+    const arr = availableContractsByOwner.get(c.ownerId) || [];
+    arr.push(c);
+    availableContractsByOwner.set(c.ownerId, arr);
+  }
 
   // Pre-carrega entries auxiliares pra fallback de valor:
   // 1. TODOS os entries do mes (qualquer type/category) pra buscar matches
@@ -705,6 +740,16 @@ export async function GET(request: NextRequest) {
 
       contractCode: contract?.code || null,
       contractStatus: contract?.status || null,
+
+      availableContracts: (availableContractsByOwner.get(principal.ownerId) || []).map((c) => ({
+        id: c.id,
+        code: c.code,
+        status: c.status,
+        propertyAddress: c.property
+          ? `${c.property.street || ""}, ${c.property.number || "S/N"} - ${c.property.city || ""}`
+          : null,
+      })),
+      entryIds: groupEntries.map((e) => e.id),
 
       propertyId: contract?.property?.id || null,
       propertyAddress,

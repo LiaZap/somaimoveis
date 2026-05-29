@@ -55,6 +55,8 @@ export async function PUT(
     if (body.recurringDay !== undefined) data.recurringDay = body.recurringDay ? parseInt(body.recurringDay as string) : null;
     if (body.installmentNumber !== undefined) data.installmentNumber = body.installmentNumber ? parseInt(body.installmentNumber as string) : null;
     if (body.installmentTotal !== undefined) data.installmentTotal = body.installmentTotal ? parseInt(body.installmentTotal as string) : null;
+    if (body.contractId !== undefined) data.contractId = body.contractId || null;
+    if (body.propertyId !== undefined) data.propertyId = body.propertyId || null;
 
     const entry = await prisma.ownerEntry.update({
       where: { id },
