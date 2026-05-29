@@ -1031,6 +1031,16 @@ export default function NotasFiscaisPage() {
                                     Verificar Status
                                   </Button>
                                 )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+                                  onClick={() => reverterEmitida(n.entryId)}
+                                  disabled={actionLoading}
+                                  title="Move a nota de volta pra Pendentes. Util pra vincular contrato/imovel antes de tentar emitir de novo. Nao afeta a prefeitura."
+                                >
+                                  Voltar pra pendente
+                                </Button>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1097,6 +1107,16 @@ export default function NotasFiscaisPage() {
                                     Verificar Status
                                   </Button>
                                 )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+                                  onClick={() => reverterEmitida(n.entryId)}
+                                  disabled={actionLoading}
+                                  title="Cancela o processamento local e volta pra Pendentes. Nao afeta a prefeitura."
+                                >
+                                  Voltar pra pendente
+                                </Button>
                               </div>
                             </TableCell>
                           </TableRow>

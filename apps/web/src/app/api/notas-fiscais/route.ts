@@ -296,13 +296,34 @@ export async function PATCH(request: NextRequest) {
     // - Invoice PROCESSANDO -> mantem (cancelamento em andamento)
     // - Invoice REJEITADA/CANCELADA -> nada a mudar
     if (emitida === false) {
+      // Reverter tambem REJEITADA / PROCESSANDO — admin pode voltar pra
+      // Pendentes pra corrigir vinculacao de contrato/property/valor e
+      // tentar emitir de novo (caso classico: E0932 sem property).
       const invoices = await prisma.invoice.findMany({
-        where: { ownerEntryId: { in: entryIds }, status: "AUTORIZADA" },
-        select: { id: true },
+        where: {
+          ownerEntryId: { in: entryIds },
+          status: { in: ["AUTORIZADA", "REJEITADA", "PROCESSANDO"] },
+        },
+        select: { id: true, status: true },
       });
-      if (invoices.length > 0) {
+      const autorizadasIds = invoices.filter((i) => i.status === "AUTORIZADA").map((i) => i.id);
+      const naoAutorizadasIds = invoices.filter((i) => i.status !== "AUTORIZADA").map((i) => i.id);
+      // REJEITADA/PROCESSANDO -> CANCELADA local (sem afetar prefeitura)
+      if (naoAutorizadasIds.length > 0) {
         await prisma.invoice.updateMany({
-          where: { id: { in: invoices.map((i) => i.id) } },
+          where: { id: { in: naoAutorizadasIds } },
+          data: {
+            status: "CANCELADA",
+            cancelamentoMotivo: "Revertida manualmente. Nota nao foi " +
+              "autorizada na prefeitura (estava rejeitada/processando) — " +
+              "admin pode corrigir vinculacao e tentar emitir novamente.",
+            dataCancelamento: new Date(),
+          },
+        });
+      }
+      if (autorizadasIds.length > 0) {
+        await prisma.invoice.updateMany({
+          where: { id: { in: autorizadasIds } },
           data: {
             status: "CANCELADA",
             cancelamentoMotivo: "Revertida manualmente pelo usuario. " +
