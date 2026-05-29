@@ -772,6 +772,24 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // Cidade do tomador sem IBGE mapeado (acontece pra owners de outros
+    // estados quando a cidade nao esta na nossa tabela). Address sera
+    // omitido pra evitar E0240. Avisa pra admin saber.
+    if (owner.street && owner.city && owner.state) {
+      // Import getIbgeCode aqui seria sujo — replicamos um mini-check:
+      // se o estado nao eh RS ou a tabela RS nao tem, geralmente sera
+      // null. Marcamos como AVISO informativo pra UI saber.
+      // (a logica de fato vai na hora do emit; aqui eh so info)
+      const uf = (owner.state || "").toUpperCase();
+      if (uf !== "RS" && uf !== "") {
+        validations.push({
+          severity: "INFO",
+          code: "OWNER_OUTRO_ESTADO",
+          message: `Tomador em ${owner.city}/${uf}. Se a cidade nao estiver na tabela IBGE, address sera omitido (E0240 evitado).`,
+        });
+      }
+    }
+
     if (aliqEfetiva.origem === "DEFAULT") {
       validations.push({
         severity: "AVISO",

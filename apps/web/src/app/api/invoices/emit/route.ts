@@ -475,9 +475,20 @@ export async function POST(request: NextRequest) {
         const isSimplesNacional = (settings.regimeTributario || "").toUpperCase() === "SIMPLES_NACIONAL"
           || settings.optanteSimples === true;
         const enviarISS = !isSimplesNacional || !!settings.retemIss;
-        const tomadorEnderecoCidade = ibge
-          ? { code: ibge, name: entry.owner.city || "", state: entry.owner.state || "RS" }
-          : { code: "4316808", name: "Santa Cruz do Sul", state: "RS" };
+        // BUG FIX: antes mandavamos sempre o IBGE da empresa (SC do Sul) com
+        // nome/estado do owner — combinação inconsistente que disparava E0240
+        // pra owners de outro estado. Agora busca IBGE do MUNICIPIO DO OWNER.
+        // Quando nao acha (cidade nao mapeada) → null e omitimos address.
+        const tomadorIbge = entry.owner.city && entry.owner.state
+          ? getIbgeCode(entry.owner.city, entry.owner.state)
+          : null;
+        const tomadorEnderecoCidade = tomadorIbge
+          ? {
+              code: tomadorIbge,
+              name: entry.owner.city || "",
+              state: (entry.owner.state || "").toUpperCase(),
+            }
+          : null;
 
         // integrationId tem que ser unico por tentativa pra Spedy nao
         // rejeitar com "ja existe nota com esse integrationId" em reemissoes.
@@ -601,13 +612,19 @@ export async function POST(request: NextRequest) {
                 };
               } => {
                 // E0240: 'CEP do tomador nao existe / nao pertence ao
-                // municipio'. Quando o CEP do owner eh invalido (vazio,
-                // <8 digitos, todos zeros), OMITIMOS address — Spedy
-                // ja esta configurada pra 'Emitir sem endereco do cliente'.
-                // E melhor uma NF sem endereco do que rejeicao por CEP.
+                // municipio'. Quando o CEP do owner eh invalido, OU o
+                // codigo IBGE do municipio nao esta mapeado, OMITIMOS
+                // address — Spedy ja esta configurada pra 'Emitir sem
+                // endereco do cliente'. Melhor sem endereco do que
+                // rejeicao por inconsistencia.
                 const cepClean = (entry.owner.zipCode || "").replace(/\D/g, "");
                 const cepValido = cepClean.length === 8 && !/^0+$/.test(cepClean);
-                const enderecoCompleto = !!(entry.owner.street && entry.owner.city && cepValido);
+                const enderecoCompleto = !!(
+                  entry.owner.street &&
+                  entry.owner.city &&
+                  cepValido &&
+                  tomadorEnderecoCidade // null quando cidade nao tem IBGE mapeado
+                );
                 return {
                   name: entry.owner.name,
                   federalTaxNumber: tomadorDoc,
@@ -618,7 +635,7 @@ export async function POST(request: NextRequest) {
                         number: entry.owner.number || "S/N",
                         complement: entry.owner.complement || undefined,
                         district: entry.owner.neighborhood || "Centro",
-                        city: tomadorEnderecoCidade,
+                        city: tomadorEnderecoCidade!,
                         postalCode: cepClean,
                       }
                     : undefined,
