@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -210,6 +210,12 @@ export default function NotasFiscaisPage() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
   const [auditFilter, setAuditFilter] = useState<"todos" | "bloqueados" | "avisos" | "ok" | "emitidas">("todos");
+  // Busca textual dentro do modal de pre-validacao (nome, contrato, CPF/CNPJ, imovel)
+  const [auditSearch, setAuditSearch] = useState("");
+  // Modo denso: compacta os cards pra caber mais notas na tela
+  const [auditDense, setAuditDense] = useState(false);
+  // Ordenacao da lista: original (status), por proprietario A-Z, ou por valor desc
+  const [auditSort, setAuditSort] = useState<"padrao" | "owner" | "valor">("padrao");
   // Resultado do ultimo auto-link (pra mostrar pulados/ambiguos)
   const [autoLinkResult, setAutoLinkResult] = useState<{
     vinculados: Array<{ entryId: string; ownerName: string; contractCode?: string; heuristic?: string }>;
@@ -223,6 +229,74 @@ export default function NotasFiscaisPage() {
 
   function auditGroupKey(i: AuditItem): string {
     return `${i.contractId || "NULL"}_${i.ano}-${String(i.mes).padStart(2, "0")}_${i.ownerId}`;
+  }
+
+  // Filtro unificado (categoria + busca textual). Usado na lista e no empty state
+  // pra evitar logica duplicada. Busca normaliza acentos e casa CPF/CNPJ por digitos.
+  function auditItemMatches(i: AuditItem): boolean {
+    // Filtro de categoria (abas OK/Avisos/Bloqueados/Emitidas)
+    if (auditFilter === "emitidas" && i.jaEmitida !== true) return false;
+    if (auditFilter === "bloqueados" && !(!i.canEmit && !i.jaEmitida && !i.naoDeclaraImob)) return false;
+    if (auditFilter === "avisos" && !(i.canEmit && i.hasWarnings)) return false;
+    if (auditFilter === "ok" && !(i.canEmit && !i.hasWarnings)) return false;
+    // Busca textual
+    const term = auditSearch.trim();
+    if (!term) return true;
+    const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    const termNorm = norm(term);
+    const haystack = norm(
+      [i.ownerName, i.contractCode, i.ownerCpfCnpj, i.propertyAddress]
+        .filter(Boolean)
+        .join(" "),
+    );
+    if (haystack.includes(termNorm)) return true;
+    // Busca por digitos (CPF/CNPJ digitado com ou sem pontuacao)
+    const termDigits = term.replace(/\D/g, "");
+    if (termDigits.length >= 3) {
+      const docDigits = (i.ownerCpfCnpj || "").replace(/\D/g, "");
+      if (docDigits.includes(termDigits)) return true;
+    }
+    return false;
+  }
+
+  // Aplica a ordenacao escolhida sem mutar o array original.
+  function auditSortItems(items: AuditItem[]): AuditItem[] {
+    if (auditSort === "padrao") return items;
+    const arr = [...items];
+    if (auditSort === "owner") {
+      arr.sort((a, b) => (a.ownerName || "").localeCompare(b.ownerName || "", "pt-BR"));
+    } else if (auditSort === "valor") {
+      arr.sort((a, b) => (b.valorNF || 0) - (a.valorNF || 0));
+    }
+    return arr;
+  }
+
+  // Realca (highlight) o trecho que casa com a busca. Accent-insensitive:
+  // compara versoes normalizadas mas renderiza o texto original.
+  function highlight(text: string | null | undefined): ReactNode {
+    const t = text ?? "";
+    const term = auditSearch.trim();
+    if (!term || !t) return t;
+    const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    const hayNorm = norm(t);
+    const needleNorm = norm(term);
+    if (!needleNorm || !hayNorm.includes(needleNorm)) return t;
+    const parts: ReactNode[] = [];
+    let from = 0;
+    let idx = hayNorm.indexOf(needleNorm, from);
+    let key = 0;
+    while (idx !== -1) {
+      if (idx > from) parts.push(t.slice(from, idx));
+      parts.push(
+        <mark key={key++} className="bg-yellow-200 text-foreground rounded-sm px-0.5">
+          {t.slice(idx, idx + needleNorm.length)}
+        </mark>,
+      );
+      from = idx + needleNorm.length;
+      idx = hayNorm.indexOf(needleNorm, from);
+    }
+    if (from < t.length) parts.push(t.slice(from));
+    return parts;
   }
 
   async function autoLinkContratos() {
@@ -608,6 +682,7 @@ export default function NotasFiscaisPage() {
   async function preValidarNotas() {
     setAuditLoading(true);
     setAuditFilter("todos");
+    setAuditSearch("");
     try {
       const res = await fetch(`/api/invoices/preview-audit?month=${month}`, {
         cache: "no-store",
@@ -1410,7 +1485,7 @@ export default function NotasFiscaisPage() {
           de NF antes de emitir — bloqueios, avisos, valor por owner. */}
       <Dialog
         open={auditReport !== null}
-        onOpenChange={(open) => { if (!open) { setAuditReport(null); setAutoLinkResult(null); } }}
+        onOpenChange={(open) => { if (!open) { setAuditReport(null); setAutoLinkResult(null); setAuditSearch(""); } }}
       >
         <DialogContent className="!max-w-[1400px] w-[95vw] max-h-[92vh] overflow-hidden flex flex-col p-0 gap-0">
           <DialogHeader className="px-6 pt-5 pb-4 border-b bg-muted/30">
@@ -1558,7 +1633,44 @@ export default function NotasFiscaisPage() {
                     );
                   })}
                 </div>
-                <div className="ml-auto" />
+                <div className="relative ml-auto w-full sm:w-[300px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                  <Input
+                    value={auditSearch}
+                    onChange={(e) => setAuditSearch(e.target.value)}
+                    placeholder="Buscar proprietário, contrato, CPF/CNPJ, imóvel..."
+                    className="h-8 pl-8 pr-8 text-xs"
+                  />
+                  {auditSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setAuditSearch("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      title="Limpar busca"
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <select
+                  value={auditSort}
+                  onChange={(e) => setAuditSort(e.target.value as typeof auditSort)}
+                  className="h-8 text-xs rounded-md border bg-background px-2 text-foreground"
+                  title="Ordenar a lista"
+                >
+                  <option value="padrao">Ordem: padrão</option>
+                  <option value="owner">Proprietário (A-Z)</option>
+                  <option value="valor">Maior valor</option>
+                </select>
+                <Button
+                  size="sm"
+                  variant={auditDense ? "default" : "outline"}
+                  className="h-8 text-xs gap-1.5"
+                  onClick={() => setAuditDense((v) => !v)}
+                  title="Alterna entre cards detalhados e modo compacto (mais notas por tela)"
+                >
+                  {auditDense ? "Modo detalhado" : "Modo compacto"}
+                </Button>
                 <Button
                   size="sm"
                   className="h-8 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
@@ -1572,6 +1684,38 @@ export default function NotasFiscaisPage() {
                   Vincular contratos
                 </Button>
               </div>
+
+              {/* Resumo do que esta visivel (categoria + busca): contagem + soma R$ */}
+              {(() => {
+                const visiveis = auditReport.items.filter(auditItemMatches);
+                const somaVisivel = visiveis.reduce((acc, x) => acc + (x.valorNF || 0), 0);
+                const buscando = auditSearch.trim();
+                return (
+                  <div className={`px-6 py-2 border-b text-xs flex items-center gap-2 shrink-0 ${
+                    buscando ? "bg-amber-50/60 text-amber-900" : "bg-muted/30 text-muted-foreground"
+                  }`}>
+                    <Search className="h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      <strong className="tabular-nums">{visiveis.length}</strong>
+                      {visiveis.length === 1 ? " nota" : " notas"} visíveis
+                      {buscando && <> para <strong>&quot;{buscando}&quot;</strong></>}
+                    </span>
+                    <span className="text-muted-foreground/60">·</span>
+                    <span>
+                      soma <strong className="tabular-nums">{formatCurrency(somaVisivel)}</strong>
+                    </span>
+                    {buscando && (
+                      <button
+                        type="button"
+                        onClick={() => setAuditSearch("")}
+                        className="ml-auto underline hover:no-underline"
+                      >
+                        limpar busca
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Painel: resultado do ultimo auto-link (vinculados, ambiguos, pulados) */}
               {autoLinkResult && (
@@ -1643,16 +1787,8 @@ export default function NotasFiscaisPage() {
               )}
 
               {/* Lista de itens */}
-              <div className="overflow-y-auto flex-1 space-y-3 px-6 py-4 bg-muted/10">
-                {auditReport.items
-                  .filter((i) => {
-                    if (auditFilter === "todos") return true;
-                    if (auditFilter === "emitidas") return i.jaEmitida === true;
-                    if (auditFilter === "bloqueados") return !i.canEmit && !i.jaEmitida && !i.naoDeclaraImob;
-                    if (auditFilter === "avisos") return i.canEmit && i.hasWarnings;
-                    if (auditFilter === "ok") return i.canEmit && !i.hasWarnings;
-                    return true;
-                  })
+              <div className={`overflow-y-auto flex-1 px-6 py-4 bg-muted/10 ${auditDense ? "space-y-1.5" : "space-y-3"}`}>
+                {auditSortItems(auditReport.items.filter(auditItemMatches))
                   .map((i) => {
                     const borderColor = i.jaEmitida
                       ? "border-blue-200 bg-white"
@@ -1681,15 +1817,15 @@ export default function NotasFiscaisPage() {
                         {/* Accent bar lateral */}
                         <div className="flex">
                           <div className={`w-1 shrink-0 ${accentColor}`} />
-                          <div className="flex-1 p-4">
+                          <div className={`flex-1 ${auditDense ? "p-2.5" : "p-4"}`}>
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 text-sm">
                               {statusIcon}
-                              <span className="font-semibold text-foreground truncate">{i.ownerName}</span>
+                              <span className="font-semibold text-foreground truncate">{highlight(i.ownerName)}</span>
                               {i.contractCode ? (
                                 <Badge variant="outline" className="text-[10px] h-5 font-mono">
-                                  {i.contractCode}
+                                  {highlight(i.contractCode)}
                                 </Badge>
                               ) : (
                                 <Badge variant="outline" className="text-[10px] h-5 border-amber-300 text-amber-700 bg-amber-50">
@@ -1712,12 +1848,12 @@ export default function NotasFiscaisPage() {
                               )}
                             </div>
 
-                            {/* Meta info grid */}
-                            <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                            {/* Meta info grid — oculta no modo denso pra caber mais notas */}
+                            <div className={`mt-2.5 grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-xs ${auditDense ? "hidden" : "grid"}`}>
                               <div className="flex gap-2">
                                 <span className="text-muted-foreground min-w-[68px]">CPF/CNPJ:</span>
                                 <span className={i.ownerCpfCnpjValido ? "font-medium" : "text-red-600 font-medium"}>
-                                  {i.ownerCpfCnpj || "(vazio)"}
+                                  {i.ownerCpfCnpj ? highlight(i.ownerCpfCnpj) : "(vazio)"}
                                   {!i.ownerCpfCnpjValido && " ⚠️"}
                                 </span>
                               </div>
@@ -1731,7 +1867,7 @@ export default function NotasFiscaisPage() {
                               <div className="flex gap-2 md:col-span-2 min-w-0">
                                 <span className="text-muted-foreground min-w-[68px] shrink-0">Imóvel:</span>
                                 {i.propertyAddress ? (
-                                  <span className="font-medium truncate" title={i.propertyAddress}>{i.propertyAddress}</span>
+                                  <span className="font-medium truncate" title={i.propertyAddress}>{highlight(i.propertyAddress)}</span>
                                 ) : (
                                   <span className="text-amber-600 font-medium">⚠️ sem imóvel — ibsCbs omitido</span>
                                 )}
@@ -1754,7 +1890,7 @@ export default function NotasFiscaisPage() {
                           </div>
                           <div className="text-right shrink-0 border-l pl-4">
                             <div className="text-xs text-muted-foreground uppercase tracking-wide">Valor NF</div>
-                            <div className="text-2xl font-bold tabular-nums leading-tight mt-0.5">
+                            <div className={`font-bold tabular-nums leading-tight mt-0.5 ${auditDense ? "text-lg" : "text-2xl"}`}>
                               {formatCurrency(i.valorNF)}
                             </div>
                             {i.valorOrigem === "MANUAL_OVERRIDE" && (
@@ -1952,17 +2088,23 @@ export default function NotasFiscaisPage() {
                     );
                   })}
                   {/* Empty state */}
-                  {auditReport.items.filter((i) => {
-                    if (auditFilter === "todos") return true;
-                    if (auditFilter === "emitidas") return i.jaEmitida === true;
-                    if (auditFilter === "bloqueados") return !i.canEmit && !i.jaEmitida && !i.naoDeclaraImob;
-                    if (auditFilter === "avisos") return i.canEmit && i.hasWarnings;
-                    if (auditFilter === "ok") return i.canEmit && !i.hasWarnings;
-                    return true;
-                  }).length === 0 && (
+                  {auditReport.items.filter(auditItemMatches).length === 0 && (
                     <div className="text-center py-16 text-muted-foreground">
-                      <div className="text-4xl mb-3">🎉</div>
-                      <div className="text-sm">Nenhum item nesta categoria</div>
+                      <div className="text-4xl mb-3">{auditSearch.trim() ? "🔍" : "🎉"}</div>
+                      <div className="text-sm">
+                        {auditSearch.trim()
+                          ? `Nenhum resultado para "${auditSearch.trim()}"`
+                          : "Nenhum item nesta categoria"}
+                      </div>
+                      {auditSearch.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => setAuditSearch("")}
+                          className="mt-3 text-xs text-primary underline hover:no-underline"
+                        >
+                          Limpar busca
+                        </button>
+                      )}
                     </div>
                   )}
               </div>
