@@ -211,6 +211,33 @@ export default function NotasFiscaisPage() {
     return `${i.contractId || "NULL"}_${i.ano}-${String(i.mes).padStart(2, "0")}_${i.ownerId}`;
   }
 
+  async function autoLinkContratos() {
+    setAuditLoading(true);
+    try {
+      const res = await fetch("/api/invoices/preview-audit/auto-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Erro no auto-link");
+        return;
+      }
+      const s = data.summary;
+      toast.success(
+        `Auto-link: ${s.vinculados} vinculados, ${s.ambiguos} ambíguos, ${s.pulados} pulados`,
+        { duration: 6000 }
+      );
+      // Re-roda pre-validacao pra atualizar os items
+      await preValidarNotas();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setAuditLoading(false);
+    }
+  }
+
   async function vincularContrato(item: AuditItem, contractId: string) {
     const entryIds = item.entryIds || [];
     if (entryIds.length === 0) {
@@ -1385,8 +1412,8 @@ export default function NotasFiscaisPage() {
                 </div>
               )}
 
-              {/* Filtros */}
-              <div className="flex gap-1 shrink-0">
+              {/* Filtros + acoes em massa */}
+              <div className="flex gap-1 shrink-0 flex-wrap items-center">
                 {(["todos", "bloqueados", "avisos", "ok"] as const).map((f) => (
                   <Button
                     key={f}
@@ -1401,6 +1428,20 @@ export default function NotasFiscaisPage() {
                       : `✅ OK (${auditReport.summary.totalCanEmit - auditReport.summary.totalComAvisos})`}
                   </Button>
                 ))}
+                <div className="ml-auto" />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1 border-emerald-400 text-emerald-700 hover:bg-emerald-50"
+                  onClick={autoLinkContratos}
+                  disabled={auditLoading}
+                  title="Tenta vincular contratos automaticamente em entries sem contractId (codigo no description, property, owner unico, valor proximo)"
+                >
+                  {auditLoading
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <CheckCircle2 className="h-3.5 w-3.5" />}
+                  Vincular contratos automaticamente
+                </Button>
               </div>
 
               {/* Lista de itens */}
