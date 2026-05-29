@@ -75,7 +75,9 @@ export async function POST(request: NextRequest) {
   // Carrega TODOS os contratos ATIVOS dos owners afetados (pra heuristicas).
   // Inclui property pra heuristica de 'mesmo endereco' decidir empates.
   const ownerIds = [...new Set(entries.map((e) => e.ownerId))];
-  const contracts = await prisma.contract.findMany({
+
+  // 1. Contratos onde owner = proprietario principal
+  const ownContracts = await prisma.contract.findMany({
     where: {
       ownerId: { in: ownerIds },
       status: { in: ["ATIVO", "PENDENTE_RENOVACAO"] },
@@ -85,15 +87,62 @@ export async function POST(request: NextRequest) {
       rentalValue: true, adminFeePercent: true, createdAt: true,
       property: { select: { id: true, street: true, number: true, zipCode: true } },
     },
-    orderBy: { createdAt: "desc" }, // mais recente primeiro
+    orderBy: { createdAt: "desc" },
   });
-  const contractsByOwner = new Map<string, typeof contracts>();
-  const contractsByCode = new Map<string, (typeof contracts)[number]>();
-  for (const c of contracts) {
+
+  // 2. Contratos onde owner aparece como COPROPRIETARIO (PropertyOwner) — caso
+  //    comum: contrato esta no nome do principal, mas REPASSE foi criado pro
+  //    coproprietario. Olha as Properties em que o owner aparece e busca
+  //    contratos ATIVOS dessas properties (mesmo se ownerId != entry.ownerId).
+  const ownerProperties = await prisma.propertyOwner.findMany({
+    where: { ownerId: { in: ownerIds } },
+    select: { ownerId: true, propertyId: true, percentage: true },
+  });
+  const propertyIdsCoprop = [...new Set(ownerProperties.map((po) => po.propertyId))];
+  const coContracts = propertyIdsCoprop.length > 0
+    ? await prisma.contract.findMany({
+        where: {
+          propertyId: { in: propertyIdsCoprop },
+          status: { in: ["ATIVO", "PENDENTE_RENOVACAO"] },
+        },
+        select: {
+          id: true, code: true, ownerId: true, propertyId: true,
+          rentalValue: true, adminFeePercent: true, createdAt: true,
+          property: { select: { id: true, street: true, number: true, zipCode: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      })
+    : [];
+
+  // Merge: contratos do owner + contratos das properties onde ele eh coprop
+  const contractsByOwner = new Map<string, typeof ownContracts>();
+  const contractsByCode = new Map<string, (typeof ownContracts)[number]>();
+
+  for (const c of ownContracts) {
     const arr = contractsByOwner.get(c.ownerId) || [];
     arr.push(c);
     contractsByOwner.set(c.ownerId, arr);
     contractsByCode.set(c.code.toUpperCase(), c);
+  }
+
+  // Indexa as properties do owner pra coprop lookup
+  const propIdsByOwner = new Map<string, Set<string>>();
+  for (const po of ownerProperties) {
+    const set = propIdsByOwner.get(po.ownerId) || new Set();
+    set.add(po.propertyId);
+    propIdsByOwner.set(po.ownerId, set);
+  }
+
+  for (const c of coContracts) {
+    for (const oid of ownerIds) {
+      const propSet = propIdsByOwner.get(oid);
+      if (propSet?.has(c.propertyId || "")) {
+        const arr = contractsByOwner.get(oid) || [];
+        // Evita duplicacao (mesmo contractId)
+        if (!arr.some((x) => x.id === c.id)) arr.push(c);
+        contractsByOwner.set(oid, arr);
+      }
+    }
   }
 
   const vinculados: LinkResult[] = [];
@@ -116,9 +165,9 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    let chosen: (typeof contracts)[number] | null = null;
+    let chosen: (typeof ownContracts)[number] | null = null;
     let heuristic: string | null = null;
-    let candidates: typeof contracts = [];
+    let candidates: typeof ownContracts = [];
 
     // Heuristica 1: codigo no description
     if (entry.description) {

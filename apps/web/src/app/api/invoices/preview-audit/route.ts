@@ -308,8 +308,13 @@ export async function GET(request: NextRequest) {
 
   // Pre-carrega TODOS os contratos ATIVOS dos owners (pra UI mostrar como
   // opcoes quando o entry esta sem contrato vinculado).
+  //
+  // Caso coproprietario: contrato esta em Contract.ownerId = 'principal',
+  // mas o REPASSE foi criado pro coproprietario. Precisamos sugerir esse
+  // contrato tambem pra ele. Buscamos via PropertyOwner.
   const ownerIdsForContracts = [...new Set(entries.map((e) => e.ownerId))];
-  const availableContractsAll = ownerIdsForContracts.length > 0
+
+  const ownContracts = ownerIdsForContracts.length > 0
     ? await prisma.contract.findMany({
         where: {
           ownerId: { in: ownerIdsForContracts },
@@ -321,11 +326,50 @@ export async function GET(request: NextRequest) {
         },
       })
     : [];
-  const availableContractsByOwner = new Map<string, typeof availableContractsAll>();
-  for (const c of availableContractsAll) {
+
+  // Coprop: PropertyOwner.ownerId == um dos owners -> contratos ATIVOS
+  // daquela property (mesmo se Contract.ownerId for diferente).
+  const propOwnersAvail = ownerIdsForContracts.length > 0
+    ? await prisma.propertyOwner.findMany({
+        where: { ownerId: { in: ownerIdsForContracts } },
+        select: { ownerId: true, propertyId: true },
+      })
+    : [];
+  const propsByOwnerForCoprop = new Map<string, Set<string>>();
+  for (const po of propOwnersAvail) {
+    const set = propsByOwnerForCoprop.get(po.ownerId) || new Set();
+    set.add(po.propertyId);
+    propsByOwnerForCoprop.set(po.ownerId, set);
+  }
+  const coContracts = propOwnersAvail.length > 0
+    ? await prisma.contract.findMany({
+        where: {
+          propertyId: { in: [...new Set(propOwnersAvail.map((p) => p.propertyId))] },
+          status: { in: ["ATIVO", "PENDENTE_RENOVACAO"] },
+        },
+        select: {
+          id: true, code: true, status: true, ownerId: true,
+          property: { select: { id: true, street: true, number: true, city: true } },
+        },
+      })
+    : [];
+
+  // Merge: contratos do owner + contratos via coprop (sem duplicar)
+  const availableContractsByOwner = new Map<string, typeof ownContracts>();
+  for (const c of ownContracts) {
     const arr = availableContractsByOwner.get(c.ownerId) || [];
     arr.push(c);
     availableContractsByOwner.set(c.ownerId, arr);
+  }
+  for (const c of coContracts) {
+    for (const oid of ownerIdsForContracts) {
+      const propSet = propsByOwnerForCoprop.get(oid);
+      if (propSet?.has(c.property?.id || "")) {
+        const arr = availableContractsByOwner.get(oid) || [];
+        if (!arr.some((x) => x.id === c.id)) arr.push(c);
+        availableContractsByOwner.set(oid, arr);
+      }
+    }
   }
 
   // Pre-carrega entries auxiliares pra fallback de valor:
