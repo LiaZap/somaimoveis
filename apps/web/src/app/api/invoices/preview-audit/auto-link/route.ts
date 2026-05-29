@@ -72,7 +72,8 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Carrega TODOS os contratos ATIVOS dos owners afetados (pra heuristicas)
+  // Carrega TODOS os contratos ATIVOS dos owners afetados (pra heuristicas).
+  // Inclui property pra heuristica de 'mesmo endereco' decidir empates.
   const ownerIds = [...new Set(entries.map((e) => e.ownerId))];
   const contracts = await prisma.contract.findMany({
     where: {
@@ -81,8 +82,10 @@ export async function POST(request: NextRequest) {
     },
     select: {
       id: true, code: true, ownerId: true, propertyId: true,
-      rentalValue: true, adminFeePercent: true,
+      rentalValue: true, adminFeePercent: true, createdAt: true,
+      property: { select: { id: true, street: true, number: true, zipCode: true } },
     },
+    orderBy: { createdAt: "desc" }, // mais recente primeiro
   });
   const contractsByOwner = new Map<string, typeof contracts>();
   const contractsByCode = new Map<string, (typeof contracts)[number]>();
@@ -158,17 +161,37 @@ export async function POST(request: NextRequest) {
           const pctDiff = expectedNet > 0 ? diff / expectedNet : 1;
           return { c, pctDiff };
         })
-        .filter((x) => x.pctDiff <= 0.02) // tolerancia 2%
+        .filter((x) => x.pctDiff <= 0.05) // tolerancia 5% (era 2%)
         .sort((a, b) => a.pctDiff - b.pctDiff);
       if (matches.length === 1) {
         chosen = matches[0].c;
         heuristic = "RENTAL_VALUE_MATCH";
-      } else if (matches.length > 1 && matches[0].pctDiff < matches[1].pctDiff) {
-        // Vencedor claro (gap entre 1o e 2o)
+      } else if (matches.length > 1 && matches[0].pctDiff < matches[1].pctDiff * 0.5) {
+        // Vencedor claro (1o eh pelo menos 50% melhor que o 2o)
         chosen = matches[0].c;
         heuristic = "RENTAL_VALUE_MATCH_BEST";
       } else if (matches.length > 1) {
         candidates = matches.map((x) => x.c);
+      }
+    }
+
+    // Heuristica 5: TODOS os contratos do owner compartilham o MESMO ENDERECO
+    // (street+number+zip). Quando ambiguidade vem de contratos no mesmo
+    // imovel (ex: contratos sucessivos com inquilinos diferentes), o
+    // ibsCbs.property vai ser identico. Vincula no mais recente (1o da
+    // lista, ordenada desc por createdAt).
+    if (!chosen && ownerContracts.length > 1) {
+      const ref = ownerContracts[0].property;
+      const allSameAddress = ref && ownerContracts.every((c) =>
+        c.property &&
+        c.property.street === ref.street &&
+        c.property.number === ref.number &&
+        c.property.zipCode === ref.zipCode
+      );
+      if (allSameAddress) {
+        chosen = ownerContracts[0]; // mais recente
+        heuristic = "ALL_SAME_PROPERTY_NEWEST";
+        candidates = []; // limpa
       }
     }
 

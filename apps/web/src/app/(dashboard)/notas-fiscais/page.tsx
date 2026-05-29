@@ -203,6 +203,13 @@ export default function NotasFiscaisPage() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
   const [auditFilter, setAuditFilter] = useState<"todos" | "bloqueados" | "avisos" | "ok">("todos");
+  // Resultado do ultimo auto-link (pra mostrar pulados/ambiguos)
+  const [autoLinkResult, setAutoLinkResult] = useState<{
+    vinculados: Array<{ entryId: string; ownerName: string; contractCode?: string; heuristic?: string }>;
+    ambiguos: Array<{ entryId: string; ownerName: string; reason?: string; candidates?: Array<{ id: string; code: string }> }>;
+    pulados: Array<{ entryId: string; ownerName: string; reason?: string }>;
+    summary: { total: number; vinculados: number; ambiguos: number; pulados: number };
+  } | null>(null);
   // Edicao de valor manual por item (groupKey -> string do input)
   const [valorEdits, setValorEdits] = useState<Record<string, string>>({});
   const [savingOverride, setSavingOverride] = useState<string | null>(null);
@@ -225,6 +232,7 @@ export default function NotasFiscaisPage() {
         return;
       }
       const s = data.summary;
+      setAutoLinkResult(data);
       toast.success(
         `Auto-link: ${s.vinculados} vinculados, ${s.ambiguos} ambíguos, ${s.pulados} pulados`,
         { duration: 6000 }
@@ -1349,7 +1357,7 @@ export default function NotasFiscaisPage() {
           de NF antes de emitir — bloqueios, avisos, valor por owner. */}
       <Dialog
         open={auditReport !== null}
-        onOpenChange={(open) => { if (!open) setAuditReport(null); }}
+        onOpenChange={(open) => { if (!open) { setAuditReport(null); setAutoLinkResult(null); } }}
       >
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
@@ -1443,6 +1451,63 @@ export default function NotasFiscaisPage() {
                   Vincular contratos automaticamente
                 </Button>
               </div>
+
+              {/* Painel: resultado do ultimo auto-link (vinculados, ambiguos, pulados) */}
+              {autoLinkResult && (
+                <details className="border rounded-md bg-muted/30 text-xs shrink-0" open>
+                  <summary className="cursor-pointer px-3 py-2 flex items-center gap-2">
+                    <span className="font-medium">📋 Último auto-link:</span>
+                    <span className="text-emerald-700">✅ {autoLinkResult.summary.vinculados} vinculados</span>
+                    {autoLinkResult.summary.ambiguos > 0 && (
+                      <span className="text-amber-700">⚠️ {autoLinkResult.summary.ambiguos} ambíguos</span>
+                    )}
+                    {autoLinkResult.summary.pulados > 0 && (
+                      <span className="text-red-700">⏭️ {autoLinkResult.summary.pulados} pulados</span>
+                    )}
+                    <button
+                      type="button"
+                      className="ml-auto text-muted-foreground hover:text-foreground text-[10px]"
+                      onClick={(e) => { e.preventDefault(); setAutoLinkResult(null); }}
+                    >
+                      Fechar
+                    </button>
+                  </summary>
+                  <div className="px-3 pb-2 space-y-2 max-h-[200px] overflow-y-auto">
+                    {autoLinkResult.summary.ambiguos > 0 && (
+                      <div>
+                        <div className="font-medium text-amber-700 mb-1">Ambíguos (vincule manualmente abaixo):</div>
+                        <ul className="space-y-0.5">
+                          {autoLinkResult.ambiguos.slice(0, 20).map((a, idx) => (
+                            <li key={idx} className="text-[11px]">
+                              <strong>{a.ownerName}</strong> — {a.reason}
+                              {a.candidates && a.candidates.length > 0 && (
+                                <span className="text-muted-foreground"> · {a.candidates.map((c) => c.code).join(", ")}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {autoLinkResult.summary.pulados > 0 && (
+                      <div>
+                        <div className="font-medium text-red-700 mb-1">Pulados:</div>
+                        <ul className="space-y-0.5">
+                          {autoLinkResult.pulados.slice(0, 20).map((p, idx) => (
+                            <li key={idx} className="text-[11px]">
+                              <strong>{p.ownerName}</strong> — {p.reason}
+                            </li>
+                          ))}
+                          {autoLinkResult.pulados.length > 20 && (
+                            <li className="text-[11px] text-muted-foreground">
+                              ...e mais {autoLinkResult.pulados.length - 20}
+                            </li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
 
               {/* Lista de itens */}
               <div className="overflow-y-auto flex-1 space-y-2 pr-1">
