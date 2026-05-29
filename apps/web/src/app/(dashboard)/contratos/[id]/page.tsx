@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
+import { GUARANTEE_INSURER_LABELS } from "@/lib/guarantee-insurers";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -111,6 +112,7 @@ interface Contract {
   guaranteeType: string | null;
   guaranteeValue: number | null;
   guaranteeNotes: string | null;
+  guaranteeInsurer: string | null;
   intermediationFee: number | null;
   intermediationInstallments: number | null;
   adjustmentIndex: string | null;
@@ -1102,6 +1104,12 @@ export default function ContratoDetalhePage() {
                         : "-"
                     }
                   />
+                  {contract.guaranteeInsurer && (
+                    <InfoRow
+                      label="Seguradora"
+                      value={GUARANTEE_INSURER_LABELS[contract.guaranteeInsurer] || contract.guaranteeInsurer}
+                    />
+                  )}
                   {contract.guaranteeNotes && (
                     <div className="py-2.5">
                       <p className="text-sm text-muted-foreground mb-1">Observações</p>

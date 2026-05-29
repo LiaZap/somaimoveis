@@ -460,6 +460,11 @@ model Contract {
   guaranteeType              String? // FIADOR, CAUCAO, SEGURO_FIANCA, TITULO_CAPITALIZACAO, SEM_GARANTIA
   guaranteeValue             Float?
   guaranteeNotes             String?
+  // Seguradora/empresa quando guaranteeType = SEGURO_FIANCA ou TITULO_CAPITALIZACAO.
+  // Lista padronizada (Leo): PORTO, TOKIO, TOO, POTTENCIAL, CREDPAGO_LOFT,
+  // MAGNICRED, CREDALUGA, OUTRA. String livre permite OUTRA + texto em
+  // guaranteeNotes pra casos especificos.
+  guaranteeInsurer           String?
   // Aluguel garantido pela imobiliaria — quando true, juros/multa por atraso
   // do inquilino SEMPRE ficam com a imobiliaria (cobre o adiantamento ja feito
   // ao proprietario). Default false = regra padrao (depende da data de pagamento).

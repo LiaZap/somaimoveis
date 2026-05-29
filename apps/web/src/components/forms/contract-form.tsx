@@ -6,6 +6,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, Upload, X, FileText, Plus, Trash2, Eye } from "lucide-react";
+import { GUARANTEE_INSURERS, requiresInsurer } from "@/lib/guarantee-insurers";
 import { GuarantorForm } from "@/components/forms/guarantor-form";
 import { OwnerForm } from "@/components/forms/owner-form";
 import { TenantForm } from "@/components/forms/tenant-form";
@@ -49,6 +50,7 @@ const contractSchema = z.object({
   guaranteeType: z.string().optional(),
   guaranteeValue: z.coerce.number().optional(),
   guaranteeNotes: z.string().optional(),
+  guaranteeInsurer: z.string().optional(),
   aluguelGarantido: z.boolean().optional(),
   adjustmentIndex: z.string().optional(),
   adjustmentMonth: z.coerce.number().int().min(1).max(12).optional(),
@@ -78,6 +80,7 @@ type ContractFormData = {
   guaranteeType?: string;
   guaranteeValue?: number;
   guaranteeNotes?: string;
+  guaranteeInsurer?: string;
   aluguelGarantido?: boolean;
   adjustmentIndex?: string;
   adjustmentMonth?: number;
@@ -147,6 +150,7 @@ export function ContractForm({ open, onOpenChange, contract, onSuccess }: Contra
       guaranteeType: "",
       guaranteeValue: undefined,
       guaranteeNotes: "",
+      guaranteeInsurer: "",
       aluguelGarantido: false,
       adjustmentIndex: "IGPM",
       adjustmentMonth: undefined,
@@ -164,6 +168,7 @@ export function ContractForm({ open, onOpenChange, contract, onSuccess }: Contra
   const selectedTenantId = watch("tenantId");
   const selectedTenant2Id = watch("tenant2Id");
   const selectedGuaranteeType = watch("guaranteeType");
+  const selectedGuaranteeInsurer = watch("guaranteeInsurer");
   const selectedAdjustmentIndex = watch("adjustmentIndex");
 
   // Fetch related data on dialog open
@@ -255,6 +260,7 @@ export function ContractForm({ open, onOpenChange, contract, onSuccess }: Contra
           guaranteeType: contract.guaranteeType || "",
           guaranteeValue: contract.guaranteeValue ?? undefined,
           guaranteeNotes: contract.guaranteeNotes || "",
+          guaranteeInsurer: (contract as any).guaranteeInsurer || "",
           aluguelGarantido: (contract as any).aluguelGarantido ?? false,
           adjustmentIndex: contract.adjustmentIndex || "IGPM",
           adjustmentMonth: contract.adjustmentMonth ?? undefined,
@@ -307,6 +313,7 @@ export function ContractForm({ open, onOpenChange, contract, onSuccess }: Contra
           guaranteeType: "",
           guaranteeValue: undefined,
           guaranteeNotes: "",
+          guaranteeInsurer: "",
           adjustmentIndex: "IGPM",
           adjustmentMonth: undefined,
           lastAdjustmentPercent: undefined,
@@ -338,6 +345,7 @@ export function ContractForm({ open, onOpenChange, contract, onSuccess }: Contra
         guaranteeType: data.guaranteeType || null,
         guaranteeValue: data.guaranteeValue || null,
         guaranteeNotes: data.guaranteeNotes || null,
+        guaranteeInsurer: data.guaranteeInsurer || null,
         aluguelGarantido: data.aluguelGarantido ?? false,
         guarantorIds: data.guaranteeType === "FIADOR" ? selectedGuarantorIds : [],
         adjustmentIndex: data.adjustmentIndex || null,
@@ -811,7 +819,13 @@ export function ContractForm({ open, onOpenChange, contract, onSuccess }: Contra
                 <Label htmlFor="guaranteeType">Tipo de Garantia</Label>
                 <Select
                   value={selectedGuaranteeType || ""}
-                  onValueChange={(value) => setValue("guaranteeType", value)}
+                  onValueChange={(value) => {
+                    setValue("guaranteeType", value);
+                    // Limpa insurer quando o tipo nao requer seguradora
+                    if (!requiresInsurer(value)) {
+                      setValue("guaranteeInsurer", "");
+                    }
+                  }}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Selecione" />
@@ -836,6 +850,28 @@ export function ContractForm({ open, onOpenChange, contract, onSuccess }: Contra
                   {...register("guaranteeValue")}
                 />
               </div>
+
+              {/* Seguradora — condicional ao tipo SEGURO_FIANCA / TITULO_CAPITALIZACAO */}
+              {requiresInsurer(selectedGuaranteeType) && (
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="guaranteeInsurer">Seguradora / Empresa</Label>
+                  <Select
+                    value={selectedGuaranteeInsurer || ""}
+                    onValueChange={(value) => setValue("guaranteeInsurer", value)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecione a seguradora" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GUARANTEE_INSURERS.map((ins) => (
+                        <SelectItem key={ins.value} value={ins.value}>
+                          {ins.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="guaranteeNotes">Observações da Garantia</Label>
