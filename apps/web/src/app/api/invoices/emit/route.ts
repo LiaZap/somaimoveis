@@ -312,7 +312,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // 5. DEBITO de TAXA_ADM (description match)
+      // 5. DEBITO de TAXA_ADM (description match) mesmo owner
       if (!adminFeeValue) {
         const debito = await prisma.ownerEntry.findFirst({
           where: {
@@ -334,6 +334,56 @@ export async function POST(request: NextRequest) {
         if (debito?.value) {
           adminFeeValue = Number(debito.value);
           adminFeeOrigem = "DEBITO_TAXA_ADM";
+        }
+      }
+
+      // 6. COPROPRIETARIO: busca INTERMEDIACAO DEBITO no MESMO CONTRATO
+      // (qualquer owner — geralmente o owner principal) e aplica share ratio.
+      // Necessario porque billing cria 1 INTERMEDIACAO DEBITO so no owner
+      // principal com valor TOTAL.
+      if (!adminFeeValue && entry.contractId) {
+        // Resolve share do owner via PropertyOwner ou notes.sharePercent
+        let sharePercent = 100;
+        if (entry.contract?.propertyId) {
+          const propOwner = await prisma.propertyOwner.findFirst({
+            where: { propertyId: entry.contract.propertyId, ownerId: entry.ownerId },
+            select: { percentage: true },
+          });
+          if (propOwner) sharePercent = propOwner.percentage;
+        }
+        if (sharePercent === 100 && entry.notes) {
+          try {
+            const n = JSON.parse(entry.notes);
+            if (typeof n.sharePercent === "number" && n.sharePercent > 0 && n.sharePercent < 100) {
+              sharePercent = n.sharePercent;
+            }
+          } catch { /* ignore */ }
+        }
+        if (sharePercent < 100) {
+          const sameContractDebito = await prisma.ownerEntry.findFirst({
+            where: {
+              contractId: entry.contractId,
+              type: "DEBITO",
+              dueDate: { gte: inicio, lt: fim },
+              status: { not: "CANCELADO" },
+              ownerId: { not: entry.ownerId },
+              OR: [
+                { category: "INTERMEDIACAO" },
+                { description: { contains: "taxa adm" } },
+                { description: { contains: "Taxa Adm" } },
+                { description: { contains: "intermedia" } },
+                { description: { contains: "Intermedia" } },
+                { description: { contains: "administra" } },
+                { description: { contains: "Administra" } },
+              ],
+            },
+            select: { value: true },
+          });
+          if (sameContractDebito?.value) {
+            const total = Number(sameContractDebito.value);
+            adminFeeValue = Math.round(total * (sharePercent / 100) * 100) / 100;
+            adminFeeOrigem = "DEBITO_TAXA_ADM_COPROP";
+          }
         }
       }
     }

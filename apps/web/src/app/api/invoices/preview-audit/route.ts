@@ -51,6 +51,10 @@ interface AuditItem {
   propertyAddress: string | null;
   propertyEnderecoCompleto: boolean;
 
+  // co-propriedade: % deste owner no imóvel
+  sharePercent: number;       // ex: 100, 60, 40
+  isCoproprietario: boolean;  // true se sharePercent < 100
+
   // valor da NF
   valorNF: number;
   valorOrigem:
@@ -243,6 +247,7 @@ export async function GET(request: NextRequest) {
   //    cobrada do owner
   // Indexa por ownerId.
   const ownerIds = [...new Set(entries.map((e) => e.ownerId))];
+  // Entries por owner (do mes) — pra fallback INTERMEDIACAO_SOLTA mesmo owner
   const allOwnerEntriesDoMes = ownerIds.length > 0
     ? await prisma.ownerEntry.findMany({
         where: {
@@ -261,6 +266,48 @@ export async function GET(request: NextRequest) {
     const arr = entriesByOwner.get(e.ownerId) || [];
     arr.push(e);
     entriesByOwner.set(e.ownerId, arr);
+  }
+
+  // Entries por CONTRATO (do mes) — pra fallback de coproprietarios:
+  // INTERMEDIACAO DEBITO eh criada SO no owner principal do contrato com
+  // valor TOTAL; coproprietarios precisam buscar pelo contractId e
+  // multiplicar pelo share deles.
+  const entriesByContract = new Map<string, typeof allOwnerEntriesDoMes>();
+  if (contractIds.length > 0) {
+    const contractEntries = await prisma.ownerEntry.findMany({
+      where: {
+        contractId: { in: contractIds },
+        dueDate: { gte: inicio, lt: fim },
+        status: { not: "CANCELADO" },
+      },
+      select: {
+        id: true, ownerId: true, type: true, category: true,
+        description: true, value: true, contractId: true, notes: true,
+      },
+    });
+    for (const e of contractEntries) {
+      if (!e.contractId) continue;
+      const arr = entriesByContract.get(e.contractId) || [];
+      arr.push(e);
+      entriesByContract.set(e.contractId, arr);
+    }
+  }
+
+  // PropertyOwners: cota de cada owner em cada property (pra coproprietarios)
+  const propertyIds = [...new Set(contracts.map((c) => c.property?.id).filter((id): id is string => !!id))];
+  const propertyOwners = propertyIds.length > 0
+    ? await prisma.propertyOwner.findMany({
+        where: { propertyId: { in: propertyIds } },
+        select: { propertyId: true, ownerId: true, percentage: true },
+      })
+    : [];
+  // Index: propertyId -> ownerId -> percentage
+  const sharesByProperty = new Map<string, Map<string, number>>();
+  for (const po of propertyOwners) {
+    if (!sharesByProperty.has(po.propertyId)) {
+      sharesByProperty.set(po.propertyId, new Map());
+    }
+    sharesByProperty.get(po.propertyId)!.set(po.ownerId, po.percentage);
   }
 
   // Pre-carrega override manual (AppSetting JSON por mes)
@@ -283,11 +330,51 @@ export async function GET(request: NextRequest) {
     const contract = principal.contractId ? contractMap.get(principal.contractId) : null;
     const validations: Validation[] = [];
 
+    // === SHARE (cota de co-propriedade) ===
+    // Resolve qual % este owner tem no imovel. Default 100% (proprietario unico).
+    // Ordem de busca:
+    //   a) PropertyOwner.percentage (cadastro oficial)
+    //   b) JSON notes.sharePercent do REPASSE (billing salva la)
+    //   c) Description "(60%)" do REPASSE
+    //   d) Default 100
+    let sharePercent = 100;
+    const propertyIdResolved = contract?.property?.id || null;
+    if (propertyIdResolved) {
+      const propShares = sharesByProperty.get(propertyIdResolved);
+      if (propShares?.has(principal.ownerId)) {
+        sharePercent = propShares.get(principal.ownerId)!;
+      }
+    }
+    // Fallback: notes.sharePercent
+    if (sharePercent === 100 && repasse?.notes) {
+      try {
+        const n = JSON.parse(repasse.notes);
+        if (typeof n.sharePercent === "number" && n.sharePercent > 0 && n.sharePercent <= 100) {
+          sharePercent = n.sharePercent;
+        }
+      } catch { /* ignore */ }
+    }
+    // Fallback: description "(N%)"
+    if (sharePercent === 100 && principal.description) {
+      const match = principal.description.match(/\((\d+(?:[.,]\d+)?)%\)/);
+      if (match) {
+        const p = parseFloat(match[1].replace(",", "."));
+        if (p > 0 && p < 100) sharePercent = p;
+      }
+    }
+    const shareRatio = sharePercent / 100;
+    const isCoproprietario = sharePercent < 100;
+    const proportional = (totalValue: number) =>
+      Math.round(totalValue * shareRatio * 100) / 100;
+
     // Calcula valor da NF — cascata de fallbacks
     let valorNF = 0;
     let valorOrigem: AuditItem["valorOrigem"] = "MISSING";
     const candidatosValor: AuditItem["candidatosValor"] = [];
     const ownerEntries = entriesByOwner.get(principal.ownerId) || [];
+    const contractEntries = principal.contractId
+      ? (entriesByContract.get(principal.contractId) || [])
+      : [];
 
     // Chave do override = contractId-yyyymm-ownerId (mesmo formato do group key)
     const overrideKey = `${principal.contractId || "NULL"}_${y}-${String(m).padStart(2, "0")}_${principal.ownerId}`;
@@ -374,7 +461,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 5. DEBITO de TAXA_ADM / intermediação cobrada do owner
+    // 5. DEBITO de TAXA_ADM / intermediação cobrada DESTE owner (mesmo ownerId)
     const debitos = ownerEntries.filter(
       (e) => e.type === "DEBITO" && TAXA_ADM_PATTERNS.test(e.description || "")
     );
@@ -384,11 +471,38 @@ export async function GET(request: NextRequest) {
         origem: "DEBITO_TAXA_ADM",
         value: v,
         entryId: d.id,
-        note: `DEBITO description: "${(d.description || "").slice(0, 50)}"`,
+        note: `DEBITO mesmo owner: "${(d.description || "").slice(0, 50)}"`,
       });
       if (valorOrigem === "MISSING" && v > 0) {
         valorNF = v;
         valorOrigem = "DEBITO_TAXA_ADM";
+      }
+    }
+
+    // 5b. INTERMEDIACAO/DEBITO no MESMO CONTRATO mas owner DIFERENTE
+    // (caso coproprietario): billing cria INTERMEDIACAO DEBITO so no owner
+    // principal com valor TOTAL — coproprietarios precisam pegar e
+    // multiplicar pelo proprio share.
+    if (isCoproprietario && contractEntries.length > 0) {
+      const sameContractDebitos = contractEntries.filter(
+        (e) =>
+          e.ownerId !== principal.ownerId &&
+          e.type === "DEBITO" &&
+          (e.category === "INTERMEDIACAO" || TAXA_ADM_PATTERNS.test(e.description || ""))
+      );
+      for (const d of sameContractDebitos) {
+        const valorTotal = Number(d.value);
+        const valorProporcional = proportional(valorTotal);
+        candidatosValor.push({
+          origem: "DEBITO_TAXA_ADM",
+          value: valorProporcional,
+          entryId: d.id,
+          note: `Coprop ${sharePercent}%: TOTAL R$${valorTotal.toFixed(2)} × ${sharePercent}% (DEBITO mesmo contrato, owner principal)`,
+        });
+        if (valorOrigem === "MISSING" && valorProporcional > 0) {
+          valorNF = valorProporcional;
+          valorOrigem = "DEBITO_TAXA_ADM";
+        }
       }
     }
 
@@ -509,6 +623,15 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // INFO: coproprietario — valor da NF é proporcional à cota
+    if (isCoproprietario) {
+      validations.push({
+        severity: "INFO",
+        code: "COPROPRIETARIO",
+        message: `Coproprietário (cota ${sharePercent}%) — valor da NF é proporcional. Verifique se há entries pros outros co-proprietários do mesmo imóvel.`,
+      });
+    }
+
     // Cross-check entre REPASSE.notes.adminFeeValue e INTERMEDIACAO.value
     if (repasse?.notes && intermediacao) {
       try {
@@ -586,6 +709,9 @@ export async function GET(request: NextRequest) {
       propertyId: contract?.property?.id || null,
       propertyAddress,
       propertyEnderecoCompleto,
+
+      sharePercent,
+      isCoproprietario,
 
       valorNF,
       valorOrigem,

@@ -128,6 +128,8 @@ interface AuditItem {
   contractStatus: string | null;
   propertyAddress: string | null;
   propertyEnderecoCompleto: boolean;
+  sharePercent?: number;
+  isCoproprietario?: boolean;
   valorNF: number;
   valorOrigem:
     | "REPASSE_NOTES"
@@ -1393,6 +1395,15 @@ export default function NotasFiscaisPage() {
                               <span className="text-xs text-muted-foreground font-normal">
                                 · {i.contractCode || "(sem contrato)"}
                               </span>
+                              {i.isCoproprietario && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] h-5 bg-purple-50 border-purple-300 text-purple-800"
+                                  title="Co-proprietário — valor proporcional à cota"
+                                >
+                                  Coprop {i.sharePercent}%
+                                </Badge>
+                              )}
                             </div>
                             <div className="text-xs text-muted-foreground mt-1 grid grid-cols-1 md:grid-cols-2 gap-x-3">
                               <div>
