@@ -113,6 +113,7 @@ interface AuditItem {
   validations: Validation[];
   canEmit: boolean;
   hasWarnings: boolean;
+  jaEmitida: boolean; // tem Invoice AUTORIZADA — categoria propria
 }
 
 function isValidCpfCnpj(doc: string): boolean {
@@ -224,10 +225,17 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  // Agrupa por (contractId, ano-mês). null contractId vira chave separada.
+  // Agrupa por NF a emitir.
+  // - Quando tem contractId: 1 NF por (contractId, ano-mes, ownerId)
+  //   (REPASSE + INTERMEDIACAO irmas viram 1 NF)
+  // - Quando NAO tem contractId: 1 NF por entry.id (cada lancamento manual
+  //   vira sua propria NF — evita consolidar varios contratos diferentes
+  //   do mesmo owner em 1 unico item, o que perderia a divisao por contrato)
   const groups = new Map<string, typeof entries>();
   for (const e of entries) {
-    const key = `${e.contractId || "NULL"}_${y}-${String(m).padStart(2, "0")}_${e.ownerId}`;
+    const key = e.contractId
+      ? `${e.contractId}_${y}-${String(m).padStart(2, "0")}_${e.ownerId}`
+      : `entry_${e.id}_${y}-${String(m).padStart(2, "0")}_${e.ownerId}`;
     const arr = groups.get(key) || [];
     arr.push(e);
     groups.set(key, arr);
@@ -411,8 +419,12 @@ export async function GET(request: NextRequest) {
       ? (entriesByContract.get(principal.contractId) || [])
       : [];
 
-    // Chave do override = contractId-yyyymm-ownerId (mesmo formato do group key)
-    const overrideKey = `${principal.contractId || "NULL"}_${y}-${String(m).padStart(2, "0")}_${principal.ownerId}`;
+    // Chave do override = mesmo formato do group key
+    //   com contract: "contractId_yyyymm_ownerId"
+    //   sem contract: "entry_<id>_yyyymm_ownerId"
+    const overrideKey = principal.contractId
+      ? `${principal.contractId}_${y}-${String(m).padStart(2, "0")}_${principal.ownerId}`
+      : `entry_${principal.id}_${y}-${String(m).padStart(2, "0")}_${principal.ownerId}`;
     const manualOverride = valueOverrides[overrideKey];
 
     // 0. MANUAL OVERRIDE tem prioridade máxima
@@ -601,11 +613,12 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    if (principal.invoice?.status === "AUTORIZADA") {
+    const jaEmitida = principal.invoice?.status === "AUTORIZADA";
+    if (jaEmitida) {
       validations.push({
-        severity: "BLOQUEANTE",
+        severity: "INFO",
         code: "JA_EMITIDA",
-        message: `Já tem NF AUTORIZADA (#${principal.invoice.numero || "?"})`,
+        message: `Já tem NF AUTORIZADA (#${principal.invoice?.numero || "?"}) — categoria 'Emitidas'`,
       });
     }
 
@@ -785,8 +798,12 @@ export async function GET(request: NextRequest) {
         : null,
 
       validations,
-      canEmit: blocking.length === 0 && !owner.naoDeclaraImob,
+      // canEmit: pode ser emitida agora. NF ja emitida (jaEmitida)
+      // tambem nao eh emitivel — mas vai numa categoria propria
+      // (nao bloqueada).
+      canEmit: blocking.length === 0 && !owner.naoDeclaraImob && !jaEmitida,
       hasWarnings: warnings.length > 0,
+      jaEmitida,
     });
   }
 
@@ -802,7 +819,8 @@ export async function GET(request: NextRequest) {
     month,
     totalItens: items.length,
     totalCanEmit: items.filter((i) => i.canEmit).length,
-    totalBloqueados: items.filter((i) => !i.canEmit).length,
+    totalJaEmitidas: items.filter((i) => i.jaEmitida).length,
+    totalBloqueados: items.filter((i) => !i.canEmit && !i.jaEmitida && !i.naoDeclaraImob).length,
     totalComAvisos: items.filter((i) => i.hasWarnings && i.canEmit).length,
     totalSuprimidos: items.filter((i) => i.naoDeclaraImob).length,
     totalReEmissao: items.filter((i) =>
@@ -815,9 +833,15 @@ export async function GET(request: NextRequest) {
         .reduce((sum, i) => sum + i.valorNF, 0)
         .toFixed(2)
     ),
+    valorTotalJaEmitidas: Number(
+      items
+        .filter((i) => i.jaEmitida)
+        .reduce((sum, i) => sum + i.valorNF, 0)
+        .toFixed(2)
+    ),
     valorTotalBloqueado: Number(
       items
-        .filter((i) => !i.canEmit)
+        .filter((i) => !i.canEmit && !i.jaEmitida && !i.naoDeclaraImob)
         .reduce((sum, i) => sum + i.valorNF, 0)
         .toFixed(2)
     ),

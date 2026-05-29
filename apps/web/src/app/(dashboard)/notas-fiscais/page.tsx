@@ -164,6 +164,7 @@ interface AuditItem {
   validations: AuditValidation[];
   canEmit: boolean;
   hasWarnings: boolean;
+  jaEmitida?: boolean;
 }
 
 interface AuditReport {
@@ -171,11 +172,13 @@ interface AuditReport {
     month: string;
     totalItens: number;
     totalCanEmit: number;
+    totalJaEmitidas?: number;
     totalBloqueados: number;
     totalComAvisos: number;
     totalSuprimidos: number;
     totalReEmissao: number;
     valorTotalAEmitir: number;
+    valorTotalJaEmitidas?: number;
     valorTotalBloqueado: number;
     porOwner: Array<{
       ownerId: string;
@@ -202,7 +205,7 @@ export default function NotasFiscaisPage() {
   // Modal de pre-validacao (audit dry-run)
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
-  const [auditFilter, setAuditFilter] = useState<"todos" | "bloqueados" | "avisos" | "ok">("todos");
+  const [auditFilter, setAuditFilter] = useState<"todos" | "bloqueados" | "avisos" | "ok" | "emitidas">("todos");
   // Resultado do ultimo auto-link (pra mostrar pulados/ambiguos)
   const [autoLinkResult, setAutoLinkResult] = useState<{
     vinculados: Array<{ entryId: string; ownerName: string; contractCode?: string; heuristic?: string }>;
@@ -1373,11 +1376,16 @@ export default function NotasFiscaisPage() {
           {auditReport && (
             <>
               {/* Summary cards */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 shrink-0">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-2 shrink-0">
                 <div className="rounded-md border bg-emerald-50 border-emerald-200 p-2">
                   <div className="text-[10px] text-emerald-700">Prontos pra emitir</div>
                   <div className="text-lg font-semibold text-emerald-900">{auditReport.summary.totalCanEmit}</div>
                   <div className="text-[10px] text-emerald-600">{formatCurrency(auditReport.summary.valorTotalAEmitir)}</div>
+                </div>
+                <div className="rounded-md border bg-blue-50 border-blue-200 p-2">
+                  <div className="text-[10px] text-blue-700">📄 Emitidas</div>
+                  <div className="text-lg font-semibold text-blue-900">{auditReport.summary.totalJaEmitidas || 0}</div>
+                  <div className="text-[10px] text-blue-600">{formatCurrency(auditReport.summary.valorTotalJaEmitidas || 0)}</div>
                 </div>
                 <div className="rounded-md border bg-red-50 border-red-200 p-2">
                   <div className="text-[10px] text-red-700">Bloqueados</div>
@@ -1393,10 +1401,10 @@ export default function NotasFiscaisPage() {
                   <div className="text-lg font-semibold text-gray-900">{auditReport.summary.totalSuprimidos}</div>
                   <div className="text-[10px] text-gray-500">naoDeclaraImob</div>
                 </div>
-                <div className="rounded-md border bg-blue-50 border-blue-200 p-2">
-                  <div className="text-[10px] text-blue-700">Re-emissões</div>
-                  <div className="text-lg font-semibold text-blue-900">{auditReport.summary.totalReEmissao}</div>
-                  <div className="text-[10px] text-blue-600">canceladas/rejeitadas</div>
+                <div className="rounded-md border bg-violet-50 border-violet-200 p-2">
+                  <div className="text-[10px] text-violet-700">Re-emissões</div>
+                  <div className="text-lg font-semibold text-violet-900">{auditReport.summary.totalReEmissao}</div>
+                  <div className="text-[10px] text-violet-600">canceladas/rejeitadas</div>
                 </div>
               </div>
 
@@ -1422,7 +1430,7 @@ export default function NotasFiscaisPage() {
 
               {/* Filtros + acoes em massa */}
               <div className="flex gap-1 shrink-0 flex-wrap items-center">
-                {(["todos", "bloqueados", "avisos", "ok"] as const).map((f) => (
+                {(["todos", "bloqueados", "avisos", "ok", "emitidas"] as const).map((f) => (
                   <Button
                     key={f}
                     size="sm"
@@ -1433,7 +1441,8 @@ export default function NotasFiscaisPage() {
                     {f === "todos" ? `Todos (${auditReport.items.length})`
                       : f === "bloqueados" ? `🔴 Bloqueados (${auditReport.summary.totalBloqueados})`
                       : f === "avisos" ? `🟡 Com avisos (${auditReport.summary.totalComAvisos})`
-                      : `✅ OK (${auditReport.summary.totalCanEmit - auditReport.summary.totalComAvisos})`}
+                      : f === "ok" ? `✅ OK (${auditReport.summary.totalCanEmit - auditReport.summary.totalComAvisos})`
+                      : `📄 Emitidas (${auditReport.summary.totalJaEmitidas || 0})`}
                   </Button>
                 ))}
                 <div className="ml-auto" />
@@ -1514,24 +1523,30 @@ export default function NotasFiscaisPage() {
                 {auditReport.items
                   .filter((i) => {
                     if (auditFilter === "todos") return true;
-                    if (auditFilter === "bloqueados") return !i.canEmit;
+                    if (auditFilter === "emitidas") return i.jaEmitida === true;
+                    if (auditFilter === "bloqueados") return !i.canEmit && !i.jaEmitida && !i.naoDeclaraImob;
                     if (auditFilter === "avisos") return i.canEmit && i.hasWarnings;
                     if (auditFilter === "ok") return i.canEmit && !i.hasWarnings;
                     return true;
                   })
                   .map((i) => {
-                    const borderColor = !i.canEmit
+                    const borderColor = i.jaEmitida
+                      ? "border-blue-300 bg-blue-50/40"
+                      : !i.canEmit
                       ? "border-red-300 bg-red-50/50"
                       : i.hasWarnings
                       ? "border-amber-300 bg-amber-50/50"
                       : "border-emerald-300 bg-emerald-50/50";
-                    const statusIcon = !i.canEmit
+                    const statusIcon = i.jaEmitida
+                      ? <FileText className="h-4 w-4 text-blue-600" />
+                      : !i.canEmit
                       ? <XCircle className="h-4 w-4 text-red-600" />
                       : i.hasWarnings
                       ? <AlertTriangle className="h-4 w-4 text-amber-600" />
                       : <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
+                    const itemKey = `${i.contractId || "null"}-${(i.entryIds || []).join("_")}-${i.ano}-${i.mes}-${i.ownerId}`;
                     return (
-                      <div key={`${i.contractId}-${i.ano}-${i.mes}-${i.ownerId}`} className={`border rounded-md p-3 ${borderColor}`}>
+                      <div key={itemKey} className={`border rounded-md p-3 ${borderColor}`}>
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 text-sm font-medium">
