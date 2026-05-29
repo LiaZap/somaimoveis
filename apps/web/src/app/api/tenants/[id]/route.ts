@@ -3,6 +3,17 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
 import { normalizeForSearch } from "@/lib/search";
 
+// Aceita "yyyy-mm-dd" OU ISO completo ("yyyy-mm-ddTHH:MM:SS.sssZ") vindos do
+// form. Ancora ao meio-dia local pra evitar shift de fuso (-1 dia) e NUNCA
+// retorna Invalid Date (que faria o Prisma lancar e devolver 500).
+function parseBirthDate(value: unknown): Date | null {
+  if (!value) return null;
+  const datePart = String(value).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return null;
+  const d = new Date(datePart + "T12:00:00");
+  return isNaN(d.getTime()) ? null : d;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -51,6 +62,7 @@ export async function PUT(
       nameNormalized: body.name ? normalizeForSearch(body.name) : undefined,
       cpfCnpj: body.cpfCnpj || undefined,
       personType: body.personType || undefined,
+      stateRegistration: body.stateRegistration || null,
       email: body.email || null,
       phone: body.phone || null,
       phone2: body.phone2 || null,
@@ -59,7 +71,7 @@ export async function PUT(
       rgIssuer: body.rgIssuer || null,
       occupation: body.occupation || body.profession || null,
       monthlyIncome: body.monthlyIncome ? parseFloat(body.monthlyIncome) : null,
-      birthDate: body.birthDate ? new Date(body.birthDate + "T12:00:00") : null,
+      birthDate: parseBirthDate(body.birthDate),
       street: body.street || null,
       number: body.number || null,
       complement: body.complement || null,

@@ -150,7 +150,7 @@ export function TenantForm({ open, onOpenChange, tenant, onSuccess }: TenantForm
           email2: tenant.email2 || "",
           rgNumber: tenant.rgNumber || "",
           rgIssuer: tenant.rgIssuer || "",
-          birthDate: tenant.birthDate || "",
+          birthDate: tenant.birthDate ? String(tenant.birthDate).slice(0, 10) : "",
           occupation: tenant.occupation || "",
           monthlyIncome: tenant.monthlyIncome ?? undefined,
           paymentDay: tenant.paymentDay ?? 5,

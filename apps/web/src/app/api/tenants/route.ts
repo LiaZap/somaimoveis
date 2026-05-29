@@ -4,6 +4,16 @@ import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth"
 import { logAudit } from "@/lib/audit-log";
 import { buildSearchWhere, normalizeForSearch } from "@/lib/search";
 
+// Aceita "yyyy-mm-dd" OU ISO completo. Ancora ao meio-dia local (evita shift
+// de fuso) e nunca devolve Invalid Date (que faria o Prisma lancar 500).
+function parseBirthDate(value: unknown): Date | null {
+  if (!value) return null;
+  const datePart = String(value).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return null;
+  const d = new Date(datePart + "T12:00:00");
+  return isNaN(d.getTime()) ? null : d;
+}
+
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
@@ -147,7 +157,7 @@ export async function POST(request: NextRequest) {
       zipCode: body.zipCode || null,
       rgNumber: body.rgNumber || null,
       rgIssuer: body.rgIssuer || null,
-      birthDate: body.birthDate ? new Date(body.birthDate + "T12:00:00") : null,
+      birthDate: parseBirthDate(body.birthDate),
       occupation: body.occupation || null,
       monthlyIncome: body.monthlyIncome ? parseFloat(body.monthlyIncome) : null,
       paymentDay: body.paymentDay ? parseInt(body.paymentDay) : 5,
