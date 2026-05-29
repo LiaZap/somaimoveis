@@ -53,7 +53,23 @@ interface AuditItem {
 
   // valor da NF
   valorNF: number;
-  valorOrigem: "REPASSE_NOTES" | "REPASSE_CALC" | "INTERMEDIACAO_ENTRY" | "MISSING";
+  valorOrigem:
+    | "REPASSE_NOTES"
+    | "REPASSE_CALC"
+    | "INTERMEDIACAO_ENTRY"
+    | "DEBITO_TAXA_ADM"           // novo: encontrado em DEBITO/owner/mes
+    | "INTERMEDIACAO_SOLTA"        // novo: INTERMEDIACAO sem contract match
+    | "DESCRIPTION_MATCH"          // novo: entry cuja description menciona taxa/admin/intermediacao
+    | "MANUAL_OVERRIDE"            // novo: digitado pelo usuario no modal
+    | "MISSING";
+
+  // candidatos de valor que encontramos (pra debug/UI mostrar alternativas)
+  candidatosValor: Array<{
+    origem: string;
+    value: number;
+    entryId?: string;
+    note?: string;
+  }>;
 
   // alíquota
   aliquotaIss: number;
@@ -88,6 +104,56 @@ function isValidCpfCnpj(doc: string): boolean {
   // todos os dígitos iguais (000000... / 111111...) = inválido
   if (/^(\d)\1+$/.test(onlyDigits)) return false;
   return true;
+}
+
+/**
+ * POST /api/invoices/preview-audit
+ * Body: { month: "YYYY-MM", overrides: { "<groupKey>": number | null } }
+ *
+ * groupKey = "<contractId|NULL>_<YYYY-MM>_<ownerId>" — mesmo formato usado
+ * internamente no GET. Salva como AppSetting.
+ *
+ * Passar `null` em algum key REMOVE o override.
+ */
+export async function POST(request: NextRequest) {
+  const auth = await requirePagePermission("notas_fiscais");
+  if (isAuthError(auth)) return auth;
+
+  const body = await request.json().catch(() => ({}));
+  const { month, overrides } = body as { month?: string; overrides?: Record<string, number | null> };
+
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+    return NextResponse.json({ error: "month invalido" }, { status: 400 });
+  }
+  if (!overrides || typeof overrides !== "object") {
+    return NextResponse.json({ error: "overrides obrigatorio (objeto)" }, { status: 400 });
+  }
+
+  const [y, m] = month.split("-").map(Number);
+  const key = `nf_value_override_${y}_${String(m).padStart(2, "0")}`;
+
+  const existing = await prisma.appSetting.findUnique({ where: { key } });
+  const current: Record<string, number> = existing ? JSON.parse(existing.value) : {};
+
+  // Aplica diff: number > 0 salva; null/0 remove
+  let added = 0;
+  let removed = 0;
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v === null || v === 0) {
+      if (k in current) { delete current[k]; removed++; }
+    } else if (typeof v === "number" && v > 0) {
+      current[k] = Math.round(v * 100) / 100;
+      added++;
+    }
+  }
+
+  await prisma.appSetting.upsert({
+    where: { key },
+    create: { key, value: JSON.stringify(current) },
+    update: { value: JSON.stringify(current) },
+  });
+
+  return NextResponse.json({ ok: true, added, removed, totalOverrides: Object.keys(current).length });
 }
 
 export async function GET(request: NextRequest) {
@@ -170,6 +236,42 @@ export async function GET(request: NextRequest) {
     : [];
   const contractMap = new Map(contracts.map((c) => [c.id, c]));
 
+  // Pre-carrega entries auxiliares pra fallback de valor:
+  // 1. TODOS os entries do mes (qualquer type/category) pra buscar matches
+  //    por description ("taxa adm", "intermediação", "administração")
+  // 2. DEBITOs do mes (qualquer category) por owner — pra buscar taxa adm
+  //    cobrada do owner
+  // Indexa por ownerId.
+  const ownerIds = [...new Set(entries.map((e) => e.ownerId))];
+  const allOwnerEntriesDoMes = ownerIds.length > 0
+    ? await prisma.ownerEntry.findMany({
+        where: {
+          ownerId: { in: ownerIds },
+          dueDate: { gte: inicio, lt: fim },
+          status: { not: "CANCELADO" },
+        },
+        select: {
+          id: true, ownerId: true, type: true, category: true,
+          description: true, value: true, contractId: true, notes: true,
+        },
+      })
+    : [];
+  const entriesByOwner = new Map<string, typeof allOwnerEntriesDoMes>();
+  for (const e of allOwnerEntriesDoMes) {
+    const arr = entriesByOwner.get(e.ownerId) || [];
+    arr.push(e);
+    entriesByOwner.set(e.ownerId, arr);
+  }
+
+  // Pre-carrega override manual (AppSetting JSON por mes)
+  const overrideKey = `nf_value_override_${y}_${String(m).padStart(2, "0")}`;
+  const overrideSetting = await prisma.appSetting.findUnique({ where: { key: overrideKey } });
+  const valueOverrides: Record<string, number> =
+    overrideSetting ? JSON.parse(overrideSetting.value) : {};
+
+  // Patterns pra match em description (case-insensitive)
+  const TAXA_ADM_PATTERNS = /taxa.*adm|administra(c|ç)(a|ã)o|intermedia(c|ç)(a|ã)o|admin\s*fee|honor(a|á)rio/i;
+
   const items: AuditItem[] = [];
 
   for (const [, groupEntries] of groups) {
@@ -181,37 +283,133 @@ export async function GET(request: NextRequest) {
     const contract = principal.contractId ? contractMap.get(principal.contractId) : null;
     const validations: Validation[] = [];
 
-    // Calcula valor da NF
+    // Calcula valor da NF — cascata de fallbacks
     let valorNF = 0;
     let valorOrigem: AuditItem["valorOrigem"] = "MISSING";
+    const candidatosValor: AuditItem["candidatosValor"] = [];
+    const ownerEntries = entriesByOwner.get(principal.ownerId) || [];
+
+    // Chave do override = contractId-yyyymm-ownerId (mesmo formato do group key)
+    const overrideKey = `${principal.contractId || "NULL"}_${y}-${String(m).padStart(2, "0")}_${principal.ownerId}`;
+    const manualOverride = valueOverrides[overrideKey];
+
+    // 0. MANUAL OVERRIDE tem prioridade máxima
+    if (typeof manualOverride === "number" && manualOverride > 0) {
+      valorNF = manualOverride;
+      valorOrigem = "MANUAL_OVERRIDE";
+      candidatosValor.push({ origem: "MANUAL_OVERRIDE", value: manualOverride, note: "Digitado pelo usuario" });
+    }
 
     // 1. Tenta do JSON notes do REPASSE
     if (repasse?.notes) {
       try {
         const n = JSON.parse(repasse.notes);
         if (typeof n.adminFeeValue === "number" && n.adminFeeValue > 0) {
-          valorNF = n.adminFeeValue;
-          valorOrigem = "REPASSE_NOTES";
+          candidatosValor.push({
+            origem: "REPASSE_NOTES",
+            value: n.adminFeeValue,
+            entryId: repasse.id,
+            note: `JSON notes do REPASSE adminFeeValue`,
+          });
+          if (valorOrigem === "MISSING") {
+            valorNF = n.adminFeeValue;
+            valorOrigem = "REPASSE_NOTES";
+          }
         }
       } catch { /* ignore */ }
     }
 
-    // 2. Calcula com aluguelBruto * percent
-    if (valorNF === 0 && repasse?.notes && contract) {
+    // 2. Calcula com aluguelBruto * percent (precisa de contract pra percent)
+    if (repasse?.notes && contract) {
       try {
         const n = JSON.parse(repasse.notes);
         if (typeof n.aluguelBruto === "number") {
           const pct = (contract.adminFeePercent || 10);
-          valorNF = Math.round(n.aluguelBruto * (pct / 100) * 100) / 100;
-          valorOrigem = "REPASSE_CALC";
+          const calc = Math.round(n.aluguelBruto * (pct / 100) * 100) / 100;
+          candidatosValor.push({
+            origem: "REPASSE_CALC",
+            value: calc,
+            note: `aluguelBruto R$${n.aluguelBruto.toFixed(2)} × ${pct}%`,
+          });
+          if (valorOrigem === "MISSING") {
+            valorNF = calc;
+            valorOrigem = "REPASSE_CALC";
+          }
         }
       } catch { /* ignore */ }
     }
 
-    // 3. Fallback: usa o INTERMEDIACAO direto
-    if (valorNF === 0 && intermediacao) {
-      valorNF = Number(intermediacao.value);
-      valorOrigem = "INTERMEDIACAO_ENTRY";
+    // 3. INTERMEDIACAO irmã (mesmo contract+owner+mes)
+    if (intermediacao) {
+      const v = Number(intermediacao.value);
+      candidatosValor.push({
+        origem: "INTERMEDIACAO_ENTRY",
+        value: v,
+        entryId: intermediacao.id,
+        note: "Entry irmão de mesmo contrato",
+      });
+      if (valorOrigem === "MISSING" && v > 0) {
+        valorNF = v;
+        valorOrigem = "INTERMEDIACAO_ENTRY";
+      }
+    }
+
+    // 4. INTERMEDIACAO SOLTA: qualquer INTERMEDIACAO do owner no mês (sem
+    // match de contract). Útil quando o REPASSE foi cadastrado manual sem
+    // contrato e a taxa adm foi como INTERMEDIACAO separada.
+    const intermediacaoSolta = ownerEntries.filter(
+      (e) => e.category === "INTERMEDIACAO" && e.id !== intermediacao?.id
+    );
+    for (const it of intermediacaoSolta) {
+      const v = Number(it.value);
+      candidatosValor.push({
+        origem: "INTERMEDIACAO_SOLTA",
+        value: v,
+        entryId: it.id,
+        note: `Mesmo owner/mes (contractId=${it.contractId || "null"})`,
+      });
+      if (valorOrigem === "MISSING" && v > 0) {
+        valorNF = v;
+        valorOrigem = "INTERMEDIACAO_SOLTA";
+      }
+    }
+
+    // 5. DEBITO de TAXA_ADM / intermediação cobrada do owner
+    const debitos = ownerEntries.filter(
+      (e) => e.type === "DEBITO" && TAXA_ADM_PATTERNS.test(e.description || "")
+    );
+    for (const d of debitos) {
+      const v = Number(d.value);
+      candidatosValor.push({
+        origem: "DEBITO_TAXA_ADM",
+        value: v,
+        entryId: d.id,
+        note: `DEBITO description: "${(d.description || "").slice(0, 50)}"`,
+      });
+      if (valorOrigem === "MISSING" && v > 0) {
+        valorNF = v;
+        valorOrigem = "DEBITO_TAXA_ADM";
+      }
+    }
+
+    // 6. Description match em qualquer entry CREDITO/DEBITO do owner que não
+    // seja o próprio REPASSE/INTERMEDIACAO (já considerados)
+    const usedIds = new Set([repasse?.id, intermediacao?.id, ...intermediacaoSolta.map(e => e.id), ...debitos.map(e => e.id)].filter(Boolean));
+    const descMatches = ownerEntries.filter(
+      (e) => !usedIds.has(e.id) && TAXA_ADM_PATTERNS.test(e.description || "")
+    );
+    for (const dm of descMatches) {
+      const v = Number(dm.value);
+      candidatosValor.push({
+        origem: "DESCRIPTION_MATCH",
+        value: v,
+        entryId: dm.id,
+        note: `${dm.type}/${dm.category}: "${(dm.description || "").slice(0, 50)}"`,
+      });
+      if (valorOrigem === "MISSING" && v > 0) {
+        valorNF = v;
+        valorOrigem = "DESCRIPTION_MATCH";
+      }
     }
 
     // Resolve alíquota
@@ -391,6 +589,7 @@ export async function GET(request: NextRequest) {
 
       valorNF,
       valorOrigem,
+      candidatosValor,
 
       aliquotaIss: aliqEfetiva.aliquotaIss,
       aliquotaIssOrigem: aliqEfetiva.origem,

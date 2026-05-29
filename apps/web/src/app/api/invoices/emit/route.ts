@@ -224,14 +224,43 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    // Calcula a taxa adm a partir do notes do entry (foi salva pelo billing)
+    // Calcula a taxa adm em cascata de fallbacks:
+    //   0. Override manual (digitado na tela de Pre-validacao)
+    //   1. JSON notes do entry (adminFeeValue salvo pelo billing)
+    //   2. aluguelBruto * adminFeePercent
+    //   3. OwnerEntry irmao INTERMEDIACAO no mesmo contract+owner+mes
+    //   4. INTERMEDIACAO SOLTA no mesmo owner+mes (sem contract match)
+    //   5. DEBITO description ~ "taxa adm" / "intermediacao" / "administracao"
     let adminFeeValue = 0;
+    let adminFeeOrigem = "MISSING";
     let adminFeePercent = entry.contract?.adminFeePercent || 10;
     let aluguelBruto = 0;
-    if (entry.notes) {
+
+    // 0. Override manual (AppSetting populado via UI de pre-validacao)
+    if (entry.dueDate) {
+      const oy = entry.dueDate.getFullYear();
+      const om = entry.dueDate.getMonth() + 1;
+      const overrideKey = `nf_value_override_${oy}_${String(om).padStart(2, "0")}`;
+      const groupKey = `${entry.contractId || "NULL"}_${oy}-${String(om).padStart(2, "0")}_${entry.ownerId}`;
+      const overrideSetting = await prisma.appSetting.findUnique({ where: { key: overrideKey } });
+      if (overrideSetting) {
+        try {
+          const overrides: Record<string, number> = JSON.parse(overrideSetting.value);
+          if (typeof overrides[groupKey] === "number" && overrides[groupKey] > 0) {
+            adminFeeValue = overrides[groupKey];
+            adminFeeOrigem = "MANUAL_OVERRIDE";
+          }
+        } catch { /* ignore */ }
+      }
+    }
+
+    if (!adminFeeValue && entry.notes) {
       try {
         const n = JSON.parse(entry.notes);
-        if (typeof n.adminFeeValue === "number") adminFeeValue = n.adminFeeValue;
+        if (typeof n.adminFeeValue === "number") {
+          adminFeeValue = n.adminFeeValue;
+          adminFeeOrigem = "REPASSE_NOTES";
+        }
         if (typeof n.adminFeePercent === "number") adminFeePercent = n.adminFeePercent;
         if (typeof n.aluguelBruto === "number") aluguelBruto = n.aluguelBruto;
       } catch {
@@ -240,25 +269,72 @@ export async function POST(request: NextRequest) {
     }
     if (!adminFeeValue && entry.contract && aluguelBruto) {
       adminFeeValue = Math.round(aluguelBruto * (adminFeePercent / 100) * 100) / 100;
+      adminFeeOrigem = "REPASSE_CALC";
     }
-    // Fallback: lancamentos manuais (sem notes JSON e sem aluguelBruto) — busca
-    // OwnerEntry irmao de categoria INTERMEDIACAO no mesmo mes/owner/contract.
-    // Essa eh a "taxa adm" registrada como debito separado no fluxo manual.
+    // Fallback: lancamentos manuais — busca entries irmas
     if (!adminFeeValue && entry.dueDate) {
       const inicio = new Date(entry.dueDate.getFullYear(), entry.dueDate.getMonth(), 1);
       const fim = new Date(entry.dueDate.getFullYear(), entry.dueDate.getMonth() + 1, 1);
-      const intermediacao = await prisma.ownerEntry.findFirst({
-        where: {
-          ownerId: entry.ownerId,
-          contractId: entry.contractId ?? undefined,
-          category: "INTERMEDIACAO",
-          dueDate: { gte: inicio, lt: fim },
-          status: { not: "CANCELADO" },
-        },
-        select: { value: true },
-      });
+
+      // 3. INTERMEDIACAO mesmo contract+owner+mes
+      const intermediacao = entry.contractId
+        ? await prisma.ownerEntry.findFirst({
+            where: {
+              ownerId: entry.ownerId,
+              contractId: entry.contractId,
+              category: "INTERMEDIACAO",
+              dueDate: { gte: inicio, lt: fim },
+              status: { not: "CANCELADO" },
+            },
+            select: { value: true },
+          })
+        : null;
       if (intermediacao?.value) {
         adminFeeValue = Number(intermediacao.value);
+        adminFeeOrigem = "INTERMEDIACAO_ENTRY";
+      }
+
+      // 4. INTERMEDIACAO SOLTA (qualquer contract, mesmo owner+mes)
+      if (!adminFeeValue) {
+        const solta = await prisma.ownerEntry.findFirst({
+          where: {
+            ownerId: entry.ownerId,
+            category: "INTERMEDIACAO",
+            dueDate: { gte: inicio, lt: fim },
+            status: { not: "CANCELADO" },
+            NOT: { id: entry.id },
+          },
+          select: { value: true },
+        });
+        if (solta?.value) {
+          adminFeeValue = Number(solta.value);
+          adminFeeOrigem = "INTERMEDIACAO_SOLTA";
+        }
+      }
+
+      // 5. DEBITO de TAXA_ADM (description match)
+      if (!adminFeeValue) {
+        const debito = await prisma.ownerEntry.findFirst({
+          where: {
+            ownerId: entry.ownerId,
+            type: "DEBITO",
+            dueDate: { gte: inicio, lt: fim },
+            status: { not: "CANCELADO" },
+            OR: [
+              { description: { contains: "taxa adm" } },
+              { description: { contains: "Taxa Adm" } },
+              { description: { contains: "intermedia" } },
+              { description: { contains: "Intermedia" } },
+              { description: { contains: "administra" } },
+              { description: { contains: "Administra" } },
+            ],
+          },
+          select: { value: true },
+        });
+        if (debito?.value) {
+          adminFeeValue = Number(debito.value);
+          adminFeeOrigem = "DEBITO_TAXA_ADM";
+        }
       }
     }
     if (!adminFeeValue) {

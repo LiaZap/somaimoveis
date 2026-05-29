@@ -129,7 +129,21 @@ interface AuditItem {
   propertyAddress: string | null;
   propertyEnderecoCompleto: boolean;
   valorNF: number;
-  valorOrigem: "REPASSE_NOTES" | "REPASSE_CALC" | "INTERMEDIACAO_ENTRY" | "MISSING";
+  valorOrigem:
+    | "REPASSE_NOTES"
+    | "REPASSE_CALC"
+    | "INTERMEDIACAO_ENTRY"
+    | "INTERMEDIACAO_SOLTA"
+    | "DEBITO_TAXA_ADM"
+    | "DESCRIPTION_MATCH"
+    | "MANUAL_OVERRIDE"
+    | "MISSING";
+  candidatosValor?: Array<{
+    origem: string;
+    value: number;
+    entryId?: string;
+    note?: string;
+  }>;
   aliquotaIss: number;
   aliquotaIssOrigem: "MENSAL" | "ANTERIOR" | "GLOBAL" | "DEFAULT";
   aliquotaCompetenciaUsada: string | null;
@@ -180,6 +194,49 @@ export default function NotasFiscaisPage() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
   const [auditFilter, setAuditFilter] = useState<"todos" | "bloqueados" | "avisos" | "ok">("todos");
+  // Edicao de valor manual por item (groupKey -> string do input)
+  const [valorEdits, setValorEdits] = useState<Record<string, string>>({});
+  const [savingOverride, setSavingOverride] = useState<string | null>(null);
+
+  function auditGroupKey(i: AuditItem): string {
+    return `${i.contractId || "NULL"}_${i.ano}-${String(i.mes).padStart(2, "0")}_${i.ownerId}`;
+  }
+
+  async function salvarOverrideValor(item: AuditItem, novoValor: number | null) {
+    const key = auditGroupKey(item);
+    setSavingOverride(key);
+    try {
+      const res = await fetch("/api/invoices/preview-audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          month,
+          overrides: { [key]: novoValor },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao salvar");
+        return;
+      }
+      toast.success(
+        novoValor === null
+          ? "Override removido"
+          : `Valor R$ ${novoValor.toFixed(2)} salvo`
+      );
+      setValorEdits((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      // Re-roda pre-validacao pra atualizar
+      await preValidarNotas();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setSavingOverride(null);
+    }
+  }
 
   async function fetchNotas() {
     setLoading(true);
@@ -1372,7 +1429,94 @@ export default function NotasFiscaisPage() {
                               {formatCurrency(i.valorNF)}
                             </div>
                             <div className="text-[10px] text-muted-foreground">Valor NF</div>
+                            {i.valorOrigem === "MANUAL_OVERRIDE" && (
+                              <div className="text-[10px] text-emerald-600 mt-0.5">✏️ manual</div>
+                            )}
                           </div>
+                        </div>
+
+                        {/* Candidatos alternativos de valor (mostra se houver mais de 1 ou se MISSING) */}
+                        {((i.candidatosValor && i.candidatosValor.length > 1) || i.valorOrigem === "MISSING") && (
+                          <div className="mt-2 rounded border bg-muted/30 p-2 text-xs">
+                            <div className="font-medium text-muted-foreground mb-1">
+                              Candidatos de valor encontrados:
+                            </div>
+                            {!i.candidatosValor || i.candidatosValor.length === 0 ? (
+                              <div className="text-amber-700">
+                                ⚠️ Nenhum candidato encontrado. Digite o valor manualmente abaixo.
+                              </div>
+                            ) : (
+                              <div className="space-y-0.5">
+                                {i.candidatosValor.map((c, idx) => (
+                                  <div key={idx} className="flex items-center justify-between gap-2">
+                                    <span className="font-mono text-[10px] opacity-70">{c.origem}</span>
+                                    <span className="text-muted-foreground truncate flex-1 mx-2 text-[10px]">
+                                      {c.note}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="font-semibold tabular-nums underline decoration-dotted hover:text-emerald-700"
+                                      onClick={() => {
+                                        setValorEdits((prev) => ({
+                                          ...prev,
+                                          [auditGroupKey(i)]: c.value.toFixed(2),
+                                        }));
+                                      }}
+                                      title="Clique pra preencher o input com este valor"
+                                    >
+                                      {formatCurrency(c.value)}
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Input de override manual */}
+                        <div className="mt-2 flex items-center gap-2">
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder={`Sobrescrever valor (atual: ${formatCurrency(i.valorNF)})`}
+                            className="h-7 text-xs flex-1 max-w-[280px]"
+                            value={valorEdits[auditGroupKey(i)] ?? ""}
+                            onChange={(e) => {
+                              const key = auditGroupKey(i);
+                              setValorEdits((prev) => ({ ...prev, [key]: e.target.value }));
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px]"
+                            disabled={
+                              savingOverride === auditGroupKey(i) ||
+                              !valorEdits[auditGroupKey(i)] ||
+                              isNaN(Number(valorEdits[auditGroupKey(i)])) ||
+                              Number(valorEdits[auditGroupKey(i)]) <= 0
+                            }
+                            onClick={() => {
+                              const v = Number(valorEdits[auditGroupKey(i)]);
+                              salvarOverrideValor(i, v);
+                            }}
+                          >
+                            {savingOverride === auditGroupKey(i)
+                              ? <Loader2 className="h-3 w-3 animate-spin" />
+                              : "Salvar valor"}
+                          </Button>
+                          {i.valorOrigem === "MANUAL_OVERRIDE" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-[11px] text-red-600"
+                              onClick={() => salvarOverrideValor(i, null)}
+                              disabled={savingOverride === auditGroupKey(i)}
+                            >
+                              Remover override
+                            </Button>
+                          )}
                         </div>
 
                         {/* Validações */}
