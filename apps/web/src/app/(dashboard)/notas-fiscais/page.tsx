@@ -366,6 +366,12 @@ export default function NotasFiscaisPage() {
     window.open(`/api/invoices/${invoiceId}/download?format=xml`, "_blank");
   }
 
+  function baixarMassaMes(format: "pdf" | "xml" | "both" = "both") {
+    // Aciona download via window.open pra o navegador receber o ZIP
+    const url = `/api/invoices/bulk-download?month=${month}&format=${format}`;
+    window.open(url, "_blank");
+  }
+
   async function cancelarNF(invoiceId: string, ownerName: string) {
     const justification = window.prompt(
       `Cancelar a NF de ${ownerName} na prefeitura?\n\nInforme a justificativa do cancelamento (obrigatório):`
@@ -875,7 +881,39 @@ export default function NotasFiscaisPage() {
                       </p>
                     </div>
                   ) : (
-                    <Table>
+                    <>
+                      <div className="flex items-center justify-end gap-2 mb-2">
+                        <span className="text-xs text-muted-foreground">
+                          Baixar em massa ({emitidas.length} {emitidas.length === 1 ? "nota" : "notas"}):
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          onClick={() => baixarMassaMes("pdf")}
+                          title="Baixa ZIP com todos os PDFs do mes"
+                        >
+                          PDFs
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          onClick={() => baixarMassaMes("xml")}
+                          title="Baixa ZIP com todos os XMLs do mes"
+                        >
+                          XMLs
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs gap-1"
+                          onClick={() => baixarMassaMes("both")}
+                          title="Baixa ZIP com PDFs e XMLs do mes"
+                        >
+                          PDF + XML
+                        </Button>
+                      </div>
+                      <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead className="text-xs">Proprietario</TableHead>
@@ -990,6 +1028,7 @@ export default function NotasFiscaisPage() {
                         })}
                       </TableBody>
                     </Table>
+                    </>
                   )
                 )}
 
