@@ -282,6 +282,38 @@ export async function PATCH(request: NextRequest) {
       create: { key: nfKey, value: JSON.stringify(nfEmitidas) },
     });
 
+    // FIX revert: quando emitida=false, tambem ajusta Invoice associada pra
+    // que a tela considere a entry como "pendente" novamente. Sem isso,
+    // a regra nfEmitida = appSetting OR inv.status === "AUTORIZADA" continua
+    // True por causa da Invoice AUTORIZADA, e a UI nao reflete o revert.
+    //
+    // - Invoice AUTORIZADA -> marca como CANCELADA local + cancelamentoMotivo
+    //   ATENCAO: nao chama a Spedy aqui; eh APENAS local. Se a NF existir
+    //   na prefeitura, o usuario precisa cancelar pelo botao "Cancelar NF"
+    //   (que chama /api/invoices/[id]/cancel). O revert eh pra casos de
+    //   marcacao manual incorreta OU pra desfazer estado interno apos
+    //   cancelamento ja feito que ficou inconsistente.
+    // - Invoice PROCESSANDO -> mantem (cancelamento em andamento)
+    // - Invoice REJEITADA/CANCELADA -> nada a mudar
+    if (emitida === false) {
+      const invoices = await prisma.invoice.findMany({
+        where: { ownerEntryId: { in: entryIds }, status: "AUTORIZADA" },
+        select: { id: true },
+      });
+      if (invoices.length > 0) {
+        await prisma.invoice.updateMany({
+          where: { id: { in: invoices.map((i) => i.id) } },
+          data: {
+            status: "CANCELADA",
+            cancelamentoMotivo: "Revertida manualmente pelo usuario. " +
+              "Se a nota foi emitida na prefeitura, use o botao 'Cancelar' " +
+              "pra solicitar cancelamento oficial.",
+            dataCancelamento: new Date(),
+          },
+        });
+      }
+    }
+
     return NextResponse.json({
       updated: entryIds.length,
       message: `${entryIds.length} NF(s) ${emitida !== false ? "marcada(s) como emitida(s)" : "revertida(s) para pendente"}`,
