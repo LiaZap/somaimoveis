@@ -590,21 +590,40 @@ export async function POST(request: NextRequest) {
               cityServiceCode: undefined,
               taxationType: "taxationInMunicipality",
               integrationId,
-              receiver: {
-                name: entry.owner.name,
-                federalTaxNumber: tomadorDoc,
-                email: entry.owner.email || undefined,
-                address: entry.owner.street
-                  ? {
-                      street: entry.owner.street,
-                      number: entry.owner.number || "S/N",
-                      complement: entry.owner.complement || undefined,
-                      district: entry.owner.neighborhood || "Centro",
-                      city: tomadorEnderecoCidade,
-                      postalCode: (entry.owner.zipCode || "").replace(/\D/g, "") || undefined,
-                    }
-                  : undefined,
-              },
+              receiver: ((): {
+                name: string;
+                federalTaxNumber: string;
+                email?: string;
+                address?: {
+                  street: string; number: string; complement?: string;
+                  district: string; city: { code: string; name: string; state: string };
+                  postalCode?: string;
+                };
+              } => {
+                // E0240: 'CEP do tomador nao existe / nao pertence ao
+                // municipio'. Quando o CEP do owner eh invalido (vazio,
+                // <8 digitos, todos zeros), OMITIMOS address — Spedy
+                // ja esta configurada pra 'Emitir sem endereco do cliente'.
+                // E melhor uma NF sem endereco do que rejeicao por CEP.
+                const cepClean = (entry.owner.zipCode || "").replace(/\D/g, "");
+                const cepValido = cepClean.length === 8 && !/^0+$/.test(cepClean);
+                const enderecoCompleto = !!(entry.owner.street && entry.owner.city && cepValido);
+                return {
+                  name: entry.owner.name,
+                  federalTaxNumber: tomadorDoc,
+                  email: entry.owner.email || undefined,
+                  address: enderecoCompleto
+                    ? {
+                        street: entry.owner.street!,
+                        number: entry.owner.number || "S/N",
+                        complement: entry.owner.complement || undefined,
+                        district: entry.owner.neighborhood || "Centro",
+                        city: tomadorEnderecoCidade,
+                        postalCode: cepClean,
+                      }
+                    : undefined,
+                };
+              })(),
               total: {
                 invoiceAmount: adminFeeValue,
                 ...(enviarISS ? { issRate: aliquota, issAmount } : {}),

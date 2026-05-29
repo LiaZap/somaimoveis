@@ -63,6 +63,18 @@ interface AuditItem {
   propertyId: string | null;
   propertyAddress: string | null;
   propertyEnderecoCompleto: boolean;
+  propertyOrigem: "OVERRIDE" | "CONTRACT" | "ENTRY_DIRECT" | "OWNER_UNIQUE" | "MISSING";
+
+  // Properties ATIVAS deste owner — pra UI sugerir vinculacao quando
+  // a property resolvida eh MISSING
+  availableProperties: Array<{
+    id: string;
+    address: string;
+    type: string;
+  }>;
+
+  // Dados do tomador (owner) usados pra detectar E0240 e omitir address
+  ownerEnderecoCepValido: boolean;
 
   // co-propriedade: % deste owner no imóvel
   sharePercent: number;       // ex: 100, 60, 40
@@ -138,40 +150,73 @@ export async function POST(request: NextRequest) {
   if (isAuthError(auth)) return auth;
 
   const body = await request.json().catch(() => ({}));
-  const { month, overrides } = body as { month?: string; overrides?: Record<string, number | null> };
+  const {
+    month,
+    overrides,
+    propertyOverrides,
+  } = body as {
+    month?: string;
+    overrides?: Record<string, number | null>;
+    propertyOverrides?: Record<string, string | null>;
+  };
 
   if (!month || !/^\d{4}-\d{2}$/.test(month)) {
     return NextResponse.json({ error: "month invalido" }, { status: 400 });
   }
-  if (!overrides || typeof overrides !== "object") {
-    return NextResponse.json({ error: "overrides obrigatorio (objeto)" }, { status: 400 });
-  }
 
   const [y, m] = month.split("-").map(Number);
-  const key = `nf_value_override_${y}_${String(m).padStart(2, "0")}`;
+  let valueResult: { added: number; removed: number; total: number } | null = null;
+  let propertyResult: { added: number; removed: number; total: number } | null = null;
 
-  const existing = await prisma.appSetting.findUnique({ where: { key } });
-  const current: Record<string, number> = existing ? JSON.parse(existing.value) : {};
-
-  // Aplica diff: number > 0 salva; null/0 remove
-  let added = 0;
-  let removed = 0;
-  for (const [k, v] of Object.entries(overrides)) {
-    if (v === null || v === 0) {
-      if (k in current) { delete current[k]; removed++; }
-    } else if (typeof v === "number" && v > 0) {
-      current[k] = Math.round(v * 100) / 100;
-      added++;
+  // Value overrides
+  if (overrides && typeof overrides === "object") {
+    const key = `nf_value_override_${y}_${String(m).padStart(2, "0")}`;
+    const existing = await prisma.appSetting.findUnique({ where: { key } });
+    const current: Record<string, number> = existing ? JSON.parse(existing.value) : {};
+    let added = 0, removed = 0;
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v === null || v === 0) {
+        if (k in current) { delete current[k]; removed++; }
+      } else if (typeof v === "number" && v > 0) {
+        current[k] = Math.round(v * 100) / 100;
+        added++;
+      }
     }
+    await prisma.appSetting.upsert({
+      where: { key },
+      create: { key, value: JSON.stringify(current) },
+      update: { value: JSON.stringify(current) },
+    });
+    valueResult = { added, removed, total: Object.keys(current).length };
   }
 
-  await prisma.appSetting.upsert({
-    where: { key },
-    create: { key, value: JSON.stringify(current) },
-    update: { value: JSON.stringify(current) },
-  });
+  // Property overrides
+  if (propertyOverrides && typeof propertyOverrides === "object") {
+    const key = `nf_property_override_${y}_${String(m).padStart(2, "0")}`;
+    const existing = await prisma.appSetting.findUnique({ where: { key } });
+    const current: Record<string, string> = existing ? JSON.parse(existing.value) : {};
+    let added = 0, removed = 0;
+    for (const [k, v] of Object.entries(propertyOverrides)) {
+      if (v === null || v === "") {
+        if (k in current) { delete current[k]; removed++; }
+      } else if (typeof v === "string" && v.length > 0) {
+        current[k] = v;
+        added++;
+      }
+    }
+    await prisma.appSetting.upsert({
+      where: { key },
+      create: { key, value: JSON.stringify(current) },
+      update: { value: JSON.stringify(current) },
+    });
+    propertyResult = { added, removed, total: Object.keys(current).length };
+  }
 
-  return NextResponse.json({ ok: true, added, removed, totalOverrides: Object.keys(current).length });
+  if (!valueResult && !propertyResult) {
+    return NextResponse.json({ error: "Nada pra atualizar (passe overrides e/ou propertyOverrides)" }, { status: 400 });
+  }
+
+  return NextResponse.json({ ok: true, valueResult, propertyResult });
 }
 
 export async function GET(request: NextRequest) {
@@ -335,6 +380,32 @@ export async function GET(request: NextRequest) {
       entriesByContract.set(e.contractId, arr);
     }
   }
+
+  // Properties ATIVAS de cada owner (pra UI sugerir vinculacao quando
+  // entry esta sem property/contract com property)
+  const allOwnerProperties = ownerIds.length > 0
+    ? await prisma.property.findMany({
+        where: { ownerId: { in: ownerIds }, active: true },
+        select: {
+          id: true, ownerId: true, type: true,
+          street: true, number: true, complement: true,
+          neighborhood: true, city: true, state: true, zipCode: true,
+        },
+        orderBy: { createdAt: "desc" },
+      })
+    : [];
+  const propertiesByOwner = new Map<string, typeof allOwnerProperties>();
+  for (const p of allOwnerProperties) {
+    const arr = propertiesByOwner.get(p.ownerId) || [];
+    arr.push(p);
+    propertiesByOwner.set(p.ownerId, arr);
+  }
+
+  // Property override (AppSetting nf_property_override_YYYY_MM)
+  const propOverrideKey = `nf_property_override_${y}_${String(m).padStart(2, "0")}`;
+  const propOverrideSetting = await prisma.appSetting.findUnique({ where: { key: propOverrideKey } });
+  const propertyOverrides: Record<string, string> =
+    propOverrideSetting ? JSON.parse(propOverrideSetting.value) : {};
 
   // PropertyOwners: cota de cada owner em cada property (pra coproprietarios)
   const propertyIds = [...new Set(contracts.map((c) => c.property?.id).filter((id): id is string => !!id))];
@@ -637,23 +708,67 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // === Resolve property (mesma cascata do emit) ===
+    // 1. Override manual (AppSetting)
+    // 2. contract.property
+    // 3. entry.propertyId direto (busca em allOwnerProperties)
+    // 4. Property unica do owner (se owner tem so 1 ativa)
+    type PropertyMinimal = {
+      id: string; street: string | null; number: string | null;
+      complement?: string | null; neighborhood: string | null;
+      city: string | null; state: string | null; zipCode: string | null;
+    };
+    let resolvedProperty: PropertyMinimal | null = null;
+    let propertyOrigem: AuditItem["propertyOrigem"] = "MISSING";
+    const ownerProperties = propertiesByOwner.get(principal.ownerId) || [];
+
+    const propOverrideId = propertyOverrides[overrideKey];
+    if (propOverrideId) {
+      const found = ownerProperties.find((p) => p.id === propOverrideId)
+        || allOwnerProperties.find((p) => p.id === propOverrideId);
+      if (found) { resolvedProperty = found; propertyOrigem = "OVERRIDE"; }
+    }
+    if (!resolvedProperty && contract?.property) {
+      resolvedProperty = contract.property;
+      propertyOrigem = "CONTRACT";
+    }
+    if (!resolvedProperty && principal.propertyId) {
+      const direct = ownerProperties.find((p) => p.id === principal.propertyId);
+      if (direct) { resolvedProperty = direct; propertyOrigem = "ENTRY_DIRECT"; }
+    }
+    if (!resolvedProperty && ownerProperties.length === 1) {
+      resolvedProperty = ownerProperties[0];
+      propertyOrigem = "OWNER_UNIQUE";
+    }
+
     const propertyEnderecoCompleto = !!(
-      contract?.property?.street &&
-      contract.property.number &&
-      contract.property.zipCode &&
-      contract.property.city
+      resolvedProperty?.street &&
+      resolvedProperty?.number &&
+      resolvedProperty?.zipCode &&
+      resolvedProperty?.city
     );
-    if (!contract?.property) {
+    if (!resolvedProperty) {
       validations.push({
-        severity: "AVISO",
+        severity: "BLOQUEANTE",
         code: "SEM_IMOVEL",
-        message: "Contrato sem Property vinculado — ibsCbs.property será omitido (pode dar E0932 na prefeitura)",
+        message: "Sem Property resolvida (nem por contrato, nem entry, nem owner único) — E0932 certo se emitir",
       });
     } else if (!propertyEnderecoCompleto) {
       validations.push({
         severity: "AVISO",
         code: "IMOVEL_INCOMPLETO",
         message: "Imóvel sem endereço completo (faltam street/number/city/CEP)",
+      });
+    }
+
+    // === Valida CEP do tomador (Owner) — E0240 ===
+    const cepClean = (owner.zipCode || "").replace(/\D/g, "");
+    const ownerEnderecoCepValido = cepClean.length === 8 && !/^0+$/.test(cepClean);
+    if (owner.street && !ownerEnderecoCepValido) {
+      validations.push({
+        severity: "AVISO",
+        code: "CEP_INVALIDO",
+        message: `CEP do tomador invalido ("${owner.zipCode || "(vazio)"}") — sera OMITIDO no XML pra evitar E0240`,
       });
     }
 
@@ -730,10 +845,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const propertyAddress = contract?.property
-      ? `${contract.property.street || ""}, ${contract.property.number || "S/N"}${contract.property.complement ? " " + contract.property.complement : ""} - ${contract.property.neighborhood || ""}, ${contract.property.city || ""}/${contract.property.state || ""}`
-      : null;
-
+    // propertyAddress agora vem de resolvedProperty (calculado acima)
     const blocking = validations.filter((v) => v.severity === "BLOQUEANTE");
     const warnings = validations.filter((v) => v.severity === "AVISO");
 
@@ -764,9 +876,18 @@ export async function GET(request: NextRequest) {
       })),
       entryIds: groupEntries.map((e) => e.id),
 
-      propertyId: contract?.property?.id || null,
-      propertyAddress,
+      propertyId: resolvedProperty?.id || null,
+      propertyAddress: resolvedProperty
+        ? `${resolvedProperty.street || ""}, ${resolvedProperty.number || "S/N"}${resolvedProperty.complement ? " " + resolvedProperty.complement : ""} - ${resolvedProperty.neighborhood || ""}, ${resolvedProperty.city || ""}/${resolvedProperty.state || ""}`
+        : null,
       propertyEnderecoCompleto,
+      propertyOrigem,
+      availableProperties: ownerProperties.map((p) => ({
+        id: p.id,
+        address: `${p.street || ""}, ${p.number || "S/N"} - ${p.city || ""}`,
+        type: p.type,
+      })),
+      ownerEnderecoCepValido,
 
       sharePercent,
       isCoproprietario,
