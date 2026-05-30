@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Header } from "@/components/layout/header";
+import { BatchAdjustmentsModal } from "@/components/nfse/batch-adjustments-modal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -40,6 +41,7 @@ import {
   ShieldCheck,
   XCircle,
   Info,
+  Sparkles,
 } from "lucide-react";
 
 interface NotaFiscal {
@@ -226,6 +228,8 @@ export default function NotasFiscaisPage() {
   // Edicao de valor manual por item (groupKey -> string do input)
   const [valorEdits, setValorEdits] = useState<Record<string, string>>({});
   const [savingOverride, setSavingOverride] = useState<string | null>(null);
+  // Modal de ajustes em lote (lista do Leo)
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
 
   function auditGroupKey(i: AuditItem): string {
     return `${i.contractId || "NULL"}_${i.ano}-${String(i.mes).padStart(2, "0")}_${i.ownerId}`;
@@ -1683,6 +1687,17 @@ export default function NotasFiscaisPage() {
                     : <CheckCircle2 className="h-3.5 w-3.5" />}
                   Vincular contratos
                 </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs gap-1.5 border-violet-400 text-violet-700 hover:bg-violet-50"
+                  onClick={() => setBatchModalOpen(true)}
+                  disabled={auditLoading}
+                  title="Aplica em lote a lista de ajustes do Leo (sem desconto, valor manual, suprimir)"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Ajustes do Leo
+                </Button>
               </div>
 
               {/* Resumo do que esta visivel (categoria + busca): contagem + soma R$ */}
@@ -2112,6 +2127,23 @@ export default function NotasFiscaisPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Modal: Ajustes em lote (lista pré-populada do Leo) */}
+      <BatchAdjustmentsModal
+        open={batchModalOpen}
+        onClose={() => setBatchModalOpen(false)}
+        month={month}
+        items={(auditReport?.items || []).map((i) => ({
+          ownerId: i.ownerId,
+          ownerName: i.ownerName,
+          contractCode: i.contractCode,
+          contractId: i.contractId,
+          ano: i.ano,
+          mes: i.mes,
+          valorNF: i.valorNF,
+        }))}
+        onAppliedRefresh={preValidarNotas}
+      />
     </div>
   );
 }

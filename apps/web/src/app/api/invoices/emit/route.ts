@@ -235,23 +235,60 @@ export async function POST(request: NextRequest) {
     let adminFeeOrigem = "MISSING";
     let adminFeePercent = entry.contract?.adminFeePercent || 10;
     let aluguelBruto = 0;
+    let sharePercentNotes = 100; // do JSON notes (pra noDiscount aplicar share)
 
-    // 0. Override manual (AppSetting populado via UI de pre-validacao)
+    // 0. Carrega flags do AppSetting (suppress, no-discount, value override).
+    // Chave segue o mesmo padrao do preview-audit:
+    //   com contract: "<contractId>_yyyymm_ownerId"
+    //   sem contract: "entry_<id>_yyyymm_ownerId"
+    let isSuprimida = false;
+    let isNoDiscount = false;
     if (entry.dueDate) {
       const oy = entry.dueDate.getFullYear();
       const om = entry.dueDate.getMonth() + 1;
-      const overrideKey = `nf_value_override_${oy}_${String(om).padStart(2, "0")}`;
-      const groupKey = `${entry.contractId || "NULL"}_${oy}-${String(om).padStart(2, "0")}_${entry.ownerId}`;
-      const overrideSetting = await prisma.appSetting.findUnique({ where: { key: overrideKey } });
-      if (overrideSetting) {
+      const mmKey = String(om).padStart(2, "0");
+      const groupKey = entry.contractId
+        ? `${entry.contractId}_${oy}-${mmKey}_${entry.ownerId}`
+        : `entry_${entry.id}_${oy}-${mmKey}_${entry.ownerId}`;
+
+      const [valueOv, suppressOv, noDiscountOv] = await Promise.all([
+        prisma.appSetting.findUnique({ where: { key: `nf_value_override_${oy}_${mmKey}` } }),
+        prisma.appSetting.findUnique({ where: { key: `nf_suppress_${oy}_${mmKey}` } }),
+        prisma.appSetting.findUnique({ where: { key: `nf_no_discount_${oy}_${mmKey}` } }),
+      ]);
+
+      if (valueOv) {
         try {
-          const overrides: Record<string, number> = JSON.parse(overrideSetting.value);
+          const overrides: Record<string, number> = JSON.parse(valueOv.value);
           if (typeof overrides[groupKey] === "number" && overrides[groupKey] > 0) {
             adminFeeValue = overrides[groupKey];
             adminFeeOrigem = "MANUAL_OVERRIDE";
           }
         } catch { /* ignore */ }
       }
+      if (suppressOv) {
+        try {
+          const supr: Record<string, true> = JSON.parse(suppressOv.value);
+          if (supr[groupKey] === true) isSuprimida = true;
+        } catch { /* ignore */ }
+      }
+      if (noDiscountOv) {
+        try {
+          const nd: Record<string, true> = JSON.parse(noDiscountOv.value);
+          if (nd[groupKey] === true) isNoDiscount = true;
+        } catch { /* ignore */ }
+      }
+    }
+
+    // Se suprimida pelo admin, pula a emissao
+    if (isSuprimida) {
+      results.push({
+        ownerEntryId: entry.id,
+        ownerName: entry.owner.name,
+        success: false,
+        error: "Suprimida manualmente pelo admin (ajuste em /notas-fiscais > Pre-validacao)",
+      });
+      continue;
     }
 
     if (!adminFeeValue && entry.notes) {
@@ -263,10 +300,21 @@ export async function POST(request: NextRequest) {
         }
         if (typeof n.adminFeePercent === "number") adminFeePercent = n.adminFeePercent;
         if (typeof n.aluguelBruto === "number") aluguelBruto = n.aluguelBruto;
+        if (typeof n.sharePercent === "number") sharePercentNotes = n.sharePercent;
       } catch {
         // ignore
       }
     }
+
+    // NO_DISCOUNT: admin marcou "ignorar desconto, usa aluguel bruto cheio".
+    // Sobrescreve o adminFeeValue (mesmo se ja veio de notes) recalculando
+    // sobre aluguelBruto sem o desconto que o billing aplicou.
+    if (isNoDiscount && aluguelBruto > 0 && adminFeeOrigem !== "MANUAL_OVERRIDE") {
+      const shareRatio = sharePercentNotes / 100;
+      adminFeeValue = Math.round(aluguelBruto * (adminFeePercent / 100) * shareRatio * 100) / 100;
+      adminFeeOrigem = "REPASSE_CALC_NO_DISCOUNT";
+    }
+
     if (!adminFeeValue && entry.contract && aluguelBruto) {
       adminFeeValue = Math.round(aluguelBruto * (adminFeePercent / 100) * 100) / 100;
       adminFeeOrigem = "REPASSE_CALC";

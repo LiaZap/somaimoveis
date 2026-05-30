@@ -126,6 +126,8 @@ interface AuditItem {
   canEmit: boolean;
   hasWarnings: boolean;
   jaEmitida: boolean; // tem Invoice AUTORIZADA — categoria propria
+  suprimidaManual: boolean; // admin marcou suppress neste mes
+  noDiscountAtivo: boolean; // admin marcou "ignorar desconto"
 }
 
 function isValidCpfCnpj(doc: string): boolean {
@@ -145,6 +147,36 @@ function isValidCpfCnpj(doc: string): boolean {
  *
  * Passar `null` em algum key REMOVE o override.
  */
+/**
+ * Helper interno: upsert/diff em AppSetting JSON record.
+ * Para "set" (lista de groupKeys), value=true entra/permanece, value=null sai.
+ * Para "map" (groupKey -> X), value=X entra, value=null sai.
+ */
+async function applyDiffJson<T>(
+  key: string,
+  diff: Record<string, T | null>,
+  predicate: (v: T | null) => boolean
+): Promise<{ added: number; removed: number; total: number }> {
+  const existing = await prisma.appSetting.findUnique({ where: { key } });
+  const current: Record<string, T> = existing ? JSON.parse(existing.value) : {};
+  let added = 0;
+  let removed = 0;
+  for (const [k, v] of Object.entries(diff)) {
+    if (v === null) {
+      if (k in current) { delete current[k]; removed++; }
+    } else if (predicate(v)) {
+      current[k] = v as T;
+      added++;
+    }
+  }
+  await prisma.appSetting.upsert({
+    where: { key },
+    create: { key, value: JSON.stringify(current) },
+    update: { value: JSON.stringify(current) },
+  });
+  return { added, removed, total: Object.keys(current).length };
+}
+
 export async function POST(request: NextRequest) {
   const auth = await requirePagePermission("notas_fiscais");
   if (isAuthError(auth)) return auth;
@@ -154,10 +186,14 @@ export async function POST(request: NextRequest) {
     month,
     overrides,
     propertyOverrides,
+    suppress,
+    noDiscount,
   } = body as {
     month?: string;
     overrides?: Record<string, number | null>;
     propertyOverrides?: Record<string, string | null>;
+    suppress?: Record<string, true | null>;        // groupKey -> true (suprimir) | null (re-incluir)
+    noDiscount?: Record<string, true | null>;      // groupKey -> true (ignorar desconto) | null
   };
 
   if (!month || !/^\d{4}-\d{2}$/.test(month)) {
@@ -165,58 +201,51 @@ export async function POST(request: NextRequest) {
   }
 
   const [y, m] = month.split("-").map(Number);
-  let valueResult: { added: number; removed: number; total: number } | null = null;
-  let propertyResult: { added: number; removed: number; total: number } | null = null;
+  const mm = String(m).padStart(2, "0");
+  const results: Record<string, unknown> = {};
 
-  // Value overrides
   if (overrides && typeof overrides === "object") {
-    const key = `nf_value_override_${y}_${String(m).padStart(2, "0")}`;
-    const existing = await prisma.appSetting.findUnique({ where: { key } });
-    const current: Record<string, number> = existing ? JSON.parse(existing.value) : {};
-    let added = 0, removed = 0;
+    // Compat: aceita number e 0 como "remover"
+    const diff: Record<string, number | null> = {};
     for (const [k, v] of Object.entries(overrides)) {
-      if (v === null || v === 0) {
-        if (k in current) { delete current[k]; removed++; }
-      } else if (typeof v === "number" && v > 0) {
-        current[k] = Math.round(v * 100) / 100;
-        added++;
-      }
+      diff[k] = v === null || v === 0 ? null : Math.round(Number(v) * 100) / 100;
     }
-    await prisma.appSetting.upsert({
-      where: { key },
-      create: { key, value: JSON.stringify(current) },
-      update: { value: JSON.stringify(current) },
-    });
-    valueResult = { added, removed, total: Object.keys(current).length };
+    results.value = await applyDiffJson<number>(
+      `nf_value_override_${y}_${mm}`,
+      diff,
+      (v) => typeof v === "number" && v > 0
+    );
   }
-
-  // Property overrides
   if (propertyOverrides && typeof propertyOverrides === "object") {
-    const key = `nf_property_override_${y}_${String(m).padStart(2, "0")}`;
-    const existing = await prisma.appSetting.findUnique({ where: { key } });
-    const current: Record<string, string> = existing ? JSON.parse(existing.value) : {};
-    let added = 0, removed = 0;
+    const diff: Record<string, string | null> = {};
     for (const [k, v] of Object.entries(propertyOverrides)) {
-      if (v === null || v === "") {
-        if (k in current) { delete current[k]; removed++; }
-      } else if (typeof v === "string" && v.length > 0) {
-        current[k] = v;
-        added++;
-      }
+      diff[k] = v === null || v === "" ? null : String(v);
     }
-    await prisma.appSetting.upsert({
-      where: { key },
-      create: { key, value: JSON.stringify(current) },
-      update: { value: JSON.stringify(current) },
-    });
-    propertyResult = { added, removed, total: Object.keys(current).length };
+    results.property = await applyDiffJson<string>(
+      `nf_property_override_${y}_${mm}`,
+      diff,
+      (v) => typeof v === "string" && v.length > 0
+    );
+  }
+  if (suppress && typeof suppress === "object") {
+    results.suppress = await applyDiffJson<true>(
+      `nf_suppress_${y}_${mm}`,
+      suppress,
+      (v) => v === true
+    );
+  }
+  if (noDiscount && typeof noDiscount === "object") {
+    results.noDiscount = await applyDiffJson<true>(
+      `nf_no_discount_${y}_${mm}`,
+      noDiscount,
+      (v) => v === true
+    );
   }
 
-  if (!valueResult && !propertyResult) {
-    return NextResponse.json({ error: "Nada pra atualizar (passe overrides e/ou propertyOverrides)" }, { status: 400 });
+  if (Object.keys(results).length === 0) {
+    return NextResponse.json({ error: "Nada pra atualizar" }, { status: 400 });
   }
-
-  return NextResponse.json({ ok: true, valueResult, propertyResult });
+  return NextResponse.json({ ok: true, ...results });
 }
 
 export async function GET(request: NextRequest) {
@@ -468,11 +497,19 @@ export async function GET(request: NextRequest) {
     sharesByProperty.get(po.propertyId)!.set(po.ownerId, po.percentage);
   }
 
-  // Pre-carrega override manual (AppSetting JSON por mes)
-  const overrideKey = `nf_value_override_${y}_${String(m).padStart(2, "0")}`;
-  const overrideSetting = await prisma.appSetting.findUnique({ where: { key: overrideKey } });
+  // Pre-carrega overrides (AppSetting JSON por mes)
+  const mm = String(m).padStart(2, "0");
+  const [valueOverrideSet, suppressSet, noDiscountSet] = await Promise.all([
+    prisma.appSetting.findUnique({ where: { key: `nf_value_override_${y}_${mm}` } }),
+    prisma.appSetting.findUnique({ where: { key: `nf_suppress_${y}_${mm}` } }),
+    prisma.appSetting.findUnique({ where: { key: `nf_no_discount_${y}_${mm}` } }),
+  ]);
   const valueOverrides: Record<string, number> =
-    overrideSetting ? JSON.parse(overrideSetting.value) : {};
+    valueOverrideSet ? JSON.parse(valueOverrideSet.value) : {};
+  const suppressMap: Record<string, true> =
+    suppressSet ? JSON.parse(suppressSet.value) : {};
+  const noDiscountMap: Record<string, true> =
+    noDiscountSet ? JSON.parse(noDiscountSet.value) : {};
 
   // Patterns pra match em description (case-insensitive)
   const TAXA_ADM_PATTERNS = /taxa.*adm|administra(c|ç)(a|ã)o|intermedia(c|ç)(a|ã)o|admin\s*fee|honor(a|á)rio/i;
@@ -541,12 +578,35 @@ export async function GET(request: NextRequest) {
       ? `${principal.contractId}_${y}-${String(m).padStart(2, "0")}_${principal.ownerId}`
       : `entry_${principal.id}_${y}-${String(m).padStart(2, "0")}_${principal.ownerId}`;
     const manualOverride = valueOverrides[overrideKey];
+    const isSuprimida = suppressMap[overrideKey] === true;
+    const isNoDiscount = noDiscountMap[overrideKey] === true;
 
     // 0. MANUAL OVERRIDE tem prioridade máxima
     if (typeof manualOverride === "number" && manualOverride > 0) {
       valorNF = manualOverride;
       valorOrigem = "MANUAL_OVERRIDE";
       candidatosValor.push({ origem: "MANUAL_OVERRIDE", value: manualOverride, note: "Digitado pelo usuario" });
+    }
+    // 0.5 NO_DISCOUNT: recalcula com aluguelBruto sem desconto
+    // (admin marcou "esta nota nao tem desconto, usa aluguel cheio")
+    // Precisa de aluguelBruto no notes E adminFeePercent (do contract ou notes)
+    if (valorOrigem === "MISSING" && isNoDiscount && repasse?.notes) {
+      try {
+        const n = JSON.parse(repasse.notes);
+        if (typeof n.aluguelBruto === "number") {
+          const pct = contract?.adminFeePercent || n.adminFeePercent || 10;
+          // Se for coprop, aplica share ratio (definido depois — usa default 100 aqui)
+          const sharePct = (typeof n.sharePercent === "number" ? n.sharePercent : 100);
+          const calc = Math.round(n.aluguelBruto * (pct / 100) * (sharePct / 100) * 100) / 100;
+          valorNF = calc;
+          valorOrigem = "REPASSE_CALC";
+          candidatosValor.push({
+            origem: "REPASSE_CALC",
+            value: calc,
+            note: `NO_DISCOUNT: aluguelBruto R$${n.aluguelBruto.toFixed(2)} × ${pct}%${sharePct < 100 ? ` × ${sharePct}%` : ""}`,
+          });
+        }
+      } catch { /* ignore */ }
     }
 
     // 1. Tenta do JSON notes do REPASSE
@@ -834,6 +894,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    if (isSuprimida) {
+      validations.push({
+        severity: "INFO",
+        code: "SUPRIMIDA_MANUAL",
+        message: "Suprimida pelo admin neste mês (ajuste manual). Não será emitida.",
+      });
+    }
+    if (isNoDiscount) {
+      validations.push({
+        severity: "INFO",
+        code: "NO_DISCOUNT",
+        message: "Admin marcou 'ignorar desconto' — valor calculado sobre aluguel bruto cheio.",
+      });
+    }
+
     if (aliqEfetiva.origem === "DEFAULT") {
       validations.push({
         severity: "AVISO",
@@ -981,12 +1056,14 @@ export async function GET(request: NextRequest) {
         : null,
 
       validations,
-      // canEmit: pode ser emitida agora. NF ja emitida (jaEmitida)
-      // tambem nao eh emitivel — mas vai numa categoria propria
-      // (nao bloqueada).
-      canEmit: blocking.length === 0 && !owner.naoDeclaraImob && !jaEmitida,
+      // canEmit: pode ser emitida agora. NF ja emitida (jaEmitida) e
+      // suprimida (manual flag) tambem nao sao emitiveis — vao em
+      // categorias proprias.
+      canEmit: blocking.length === 0 && !owner.naoDeclaraImob && !jaEmitida && !isSuprimida,
       hasWarnings: warnings.length > 0,
       jaEmitida,
+      suprimidaManual: isSuprimida,
+      noDiscountAtivo: isNoDiscount,
     });
   }
 
