@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
     const contractId = searchParams.get("contractId");
     const search = searchParams.get("search");
     const pageParam = searchParams.get("page");
+    const month = searchParams.get("month"); // YYYY-MM (filtra por createdAt)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: Record<string, any> = {};
@@ -34,6 +35,13 @@ export async function GET(request: NextRequest) {
     if (tenantId) where.tenantId = tenantId;
     if (ownerId) where.ownerId = ownerId;
     if (contractId) where.contractId = contractId;
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [y, m] = month.split("-").map(Number);
+      where.createdAt = {
+        gte: new Date(y, m - 1, 1),
+        lt: new Date(y, m, 1),
+      };
+    }
     if (search) {
       where.OR = [
         { recipientName: { contains: search } },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requirePagePermission, isAuthError } from "@/lib/api-auth";
+import { isDescontoDeAluguel } from "@/lib/desconto-aluguel";
 
 /**
  * GET /api/notas-fiscais?month=YYYY-MM
@@ -66,18 +67,22 @@ export async function GET(request: NextRequest) {
           select: { id: true, contractId: true, notes: true },
         })
       : [];
-    // Mapa: contractId -> total de descontos/creditos do locatario nesse mes
+    // Mapa: contractId -> total de descontos DE ALUGUEL do locatario nesse mes.
+    // Regra Leo: SO descontos relacionados a aluguel reduzem a base da
+    // taxa adm. Descontos de seguro fianca, IPTU, condominio etc nao
+    // entram (a imobiliaria mantem os 10% sobre o aluguel cheio).
+    // Antes: somavamos QUALQUER CREDITO (errado) -> recebiamos menos.
     const descontoByContract = new Map<string, number>();
     for (const p of payments) {
       if (!p.contractId || !p.notes) continue;
       try {
         const n = JSON.parse(p.notes);
         if (Array.isArray(n.lancamentos)) {
-          for (const l of n.lancamentos as Array<{ tipo?: string; valor?: number }>) {
-            if (l.tipo === "CREDITO" && typeof l.valor === "number" && l.valor > 0) {
+          for (const l of n.lancamentos as Array<{ tipo?: string; categoria?: string; descricao?: string; valor?: number }>) {
+            if (isDescontoDeAluguel(l)) {
               descontoByContract.set(
                 p.contractId,
-                (descontoByContract.get(p.contractId) || 0) + l.valor
+                (descontoByContract.get(p.contractId) || 0) + (l.valor || 0)
               );
             }
           }

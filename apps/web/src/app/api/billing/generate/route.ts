@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, isAuthError } from "@/lib/api-auth";
 import { consolidateIRRFByOwnerMonth } from "@/lib/fiscal-consolidate";
 import { nextBusinessDay } from "@/lib/business-days";
+import { isDescontoDeAluguel } from "@/lib/desconto-aluguel";
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth();
@@ -285,14 +286,24 @@ export async function POST(request: NextRequest) {
         const totalValue = Math.max(0, Math.round((prorataRentalValue + condoFee + iptuMonthly + bankFee + insuranceFee + totalDebits - totalCredits) * 100) / 100);
 
         // Calculate split values (admin fee applies to rental value proporcional)
-        // Fix Leo 13/05: quando ha desconto de ALUGUEL (acordo de reducao do
-        // valor mensal por periodo), a taxa de admin e calculada sobre o
-        // aluguel LIQUIDO (apos desconto). Descontos de outras categorias
-        // (chamada extra, reserva, IPTU) NAO reduzem a base.
-        // Ex: aluguel R$ 4.600, desconto R$ 600 -> taxa sobre R$ 4.000 = R$ 400.
+        // Fix Leo 13/05 + Mai/26: quando ha desconto DE ALUGUEL (acordo
+        // de reducao do valor mensal por periodo), a taxa de admin e
+        // calculada sobre o aluguel LIQUIDO (apos desconto). Descontos
+        // de outras categorias (seguro fianca, IPTU, condominio, taxas)
+        // NAO reduzem a base — imobiliaria mantem 10% sobre o cheio.
+        //
+        // Antes: aceitava qualquer entry categoria=DESCONTO (sem checar
+        // descricao). Resultado: desconto de seguro fianca era tratado
+        // como desconto de aluguel e reduzia a base errado.
+        // Agora usa isDescontoDeAluguel() — helper unificado em lib/.
         const adminFee = contract.adminFeePercent || 10;
         const descontoAluguel = discountEntries
-          .filter(e => (e.category || "").toUpperCase() === "DESCONTO")
+          .filter(e => isDescontoDeAluguel({
+            tipo: e.type,
+            categoria: e.category,
+            descricao: e.description,
+            valor: e.value,
+          }))
           .reduce((sum, e) => sum + e.value, 0);
         const aluguelLiquidoParaAdmin = Math.max(0, prorataRentalValue - descontoAluguel);
         let adminFeeBase = Math.round(aluguelLiquidoParaAdmin * (adminFee / 100) * 100) / 100;
