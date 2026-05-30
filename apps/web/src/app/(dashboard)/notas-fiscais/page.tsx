@@ -181,6 +181,7 @@ interface AuditReport {
     totalCanEmit: number;
     totalJaEmitidas?: number;
     totalBloqueados: number;
+    totalSemContrato?: number;
     totalComAvisos: number;
     totalSuprimidos: number;
     totalReEmissao: number;
@@ -1511,6 +1512,32 @@ export default function NotasFiscaisPage() {
 
           {auditReport && (
             <>
+              {/* Banner critico: entries sem contrato vinculado */}
+              {(auditReport.summary.totalSemContrato || 0) > 0 && (
+                <div className="mx-6 mt-4 rounded-md border-2 border-red-300 bg-red-50 p-3 flex items-start gap-3 shrink-0">
+                  <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-red-900">
+                      ⚠️ {auditReport.summary.totalSemContrato} {auditReport.summary.totalSemContrato === 1 ? "entry" : "entries"} sem contrato vinculado
+                    </div>
+                    <div className="text-xs text-red-800 mt-1">
+                      Regra Somma: todo proprietário e coproprietário precisa ter contrato vinculado.
+                      Use o botão <strong>"Vincular contratos"</strong> abaixo (auto-link) ou clique
+                      em <strong>"Vincular"</strong> dentro de cada card pra escolher manualmente.
+                      A emissão está bloqueada até vincular todos.
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1 shrink-0 border-red-400 text-red-700 hover:bg-red-100"
+                    onClick={() => setAuditFilter("bloqueados")}
+                  >
+                    Ver bloqueados
+                  </Button>
+                </div>
+              )}
+
               {/* Summary cards */}
               <div className="px-6 py-4 border-b bg-background">
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
