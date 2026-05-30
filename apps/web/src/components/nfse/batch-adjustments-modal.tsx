@@ -89,6 +89,7 @@ interface AuditItemLite {
   ano: number;
   mes: number;
   valorNF: number;
+  groupKey?: string; // chave canonica do backend
 }
 
 interface Props {
@@ -104,10 +105,13 @@ function normalize(s: string): string {
 }
 
 function groupKey(i: AuditItemLite): string {
+  // SEMPRE usa o groupKey canonico do backend. Fallback so pra compat se
+  // estiver ausente (entries sem contrato precisam do entry.id real).
+  if (i.groupKey) return i.groupKey;
   const mm = String(i.mes).padStart(2, "0");
   return i.contractId
     ? `${i.contractId}_${i.ano}-${mm}_${i.ownerId}`
-    : `entry_unknown_${i.ano}-${mm}_${i.ownerId}`; // backend precisa entry.id real; fallback so pra match name
+    : `entry_unknown_${i.ano}-${mm}_${i.ownerId}`;
 }
 
 export function BatchAdjustmentsModal({ open, onClose, month, items, onAppliedRefresh }: Props) {

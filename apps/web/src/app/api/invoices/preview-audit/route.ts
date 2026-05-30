@@ -128,6 +128,11 @@ interface AuditItem {
   jaEmitida: boolean; // tem Invoice AUTORIZADA — categoria propria
   suprimidaManual: boolean; // admin marcou suppress neste mes
   noDiscountAtivo: boolean; // admin marcou "ignorar desconto"
+
+  // groupKey CANONICO usado em todos os AppSettings (overrides, suppress,
+  // noDiscount). UI DEVE usar ESTE valor — calcular paralelo causa bug
+  // (sem contrato: backend usa entry_<id>_, UI usava NULL_).
+  groupKey: string;
 }
 
 function isValidCpfCnpj(doc: string): boolean {
@@ -1064,6 +1069,7 @@ export async function GET(request: NextRequest) {
       jaEmitida,
       suprimidaManual: isSuprimida,
       noDiscountAtivo: isNoDiscount,
+      groupKey: overrideKey, // chave canonica — UI deve usar esta sempre
     });
   }
 

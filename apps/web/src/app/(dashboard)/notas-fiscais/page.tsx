@@ -171,6 +171,7 @@ interface AuditItem {
   canEmit: boolean;
   hasWarnings: boolean;
   jaEmitida?: boolean;
+  groupKey?: string; // chave canonica do backend (sempre prefira esta)
 }
 
 interface AuditReport {
@@ -232,6 +233,12 @@ export default function NotasFiscaisPage() {
   const [batchModalOpen, setBatchModalOpen] = useState(false);
 
   function auditGroupKey(i: AuditItem): string {
+    // SEMPRE prefere o groupKey que o backend mandou (chave canonica usada
+    // nos AppSettings de override/suppress/noDiscount). Antes a UI calculava
+    // paralelo com 'NULL' e o backend usava 'entry_<id>' — overrides em
+    // entries sem contrato eram salvos com chave errada e nao tinham
+    // efeito na hora de emitir. Mantemos fallback so pra compat.
+    if (i.groupKey) return i.groupKey;
     return `${i.contractId || "NULL"}_${i.ano}-${String(i.mes).padStart(2, "0")}_${i.ownerId}`;
   }
 
@@ -2141,6 +2148,7 @@ export default function NotasFiscaisPage() {
           ano: i.ano,
           mes: i.mes,
           valorNF: i.valorNF,
+          groupKey: i.groupKey, // chave canonica do backend
         }))}
         onAppliedRefresh={preValidarNotas}
       />
