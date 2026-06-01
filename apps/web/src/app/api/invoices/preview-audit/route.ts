@@ -128,6 +128,11 @@ interface AuditItem {
   jaEmitida: boolean; // tem Invoice AUTORIZADA — categoria propria
   suprimidaManual: boolean; // admin marcou suppress neste mes
   noDiscountAtivo: boolean; // admin marcou "ignorar desconto"
+
+  // groupKey CANONICO usado em todos os AppSettings (overrides, suppress,
+  // noDiscount). UI DEVE usar ESTE valor — calcular paralelo causa bug
+  // (sem contrato: backend usa entry_<id>_, UI usava NULL_).
+  groupKey: string;
 }
 
 function isValidCpfCnpj(doc: string): boolean {
@@ -797,12 +802,15 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 🟡 AVISOS
+    // 🔴 BLOQUEANTE: regra Somma — TODO entry (proprietario e
+    // coproprietario) PRECISA ter contrato vinculado. Sem isso, a NF
+    // sai inconsistente (sem property real do contrato, sem rastreio
+    // contabil correto). Bloqueia emissao ate admin vincular.
     if (!contract) {
       validations.push({
-        severity: "AVISO",
+        severity: "BLOQUEANTE",
         code: "SEM_CONTRATO",
-        message: "Entry não tem contrato vinculado",
+        message: "Entry SEM contrato vinculado — todo proprietario e coproprietario precisa ter contrato. Vincule um (ou cadastre novo se nao existir).",
       });
     } else if (contract.status === "RESCINDIDO") {
       validations.push({
@@ -1064,6 +1072,7 @@ export async function GET(request: NextRequest) {
       jaEmitida,
       suprimidaManual: isSuprimida,
       noDiscountAtivo: isNoDiscount,
+      groupKey: overrideKey, // chave canonica — UI deve usar esta sempre
     });
   }
 
@@ -1081,6 +1090,7 @@ export async function GET(request: NextRequest) {
     totalCanEmit: items.filter((i) => i.canEmit).length,
     totalJaEmitidas: items.filter((i) => i.jaEmitida).length,
     totalBloqueados: items.filter((i) => !i.canEmit && !i.jaEmitida && !i.naoDeclaraImob).length,
+    totalSemContrato: items.filter((i) => !i.contractCode && !i.jaEmitida).length,
     totalComAvisos: items.filter((i) => i.hasWarnings && i.canEmit).length,
     totalSuprimidos: items.filter((i) => i.naoDeclaraImob).length,
     totalReEmissao: items.filter((i) =>

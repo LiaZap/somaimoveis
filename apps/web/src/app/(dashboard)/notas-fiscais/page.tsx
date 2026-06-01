@@ -3,7 +3,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Header } from "@/components/layout/header";
-import { BatchAdjustmentsModal } from "@/components/nfse/batch-adjustments-modal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -41,7 +40,6 @@ import {
   ShieldCheck,
   XCircle,
   Info,
-  Sparkles,
 } from "lucide-react";
 
 interface NotaFiscal {
@@ -171,6 +169,7 @@ interface AuditItem {
   canEmit: boolean;
   hasWarnings: boolean;
   jaEmitida?: boolean;
+  groupKey?: string; // chave canonica do backend (sempre prefira esta)
 }
 
 interface AuditReport {
@@ -180,6 +179,7 @@ interface AuditReport {
     totalCanEmit: number;
     totalJaEmitidas?: number;
     totalBloqueados: number;
+    totalSemContrato?: number;
     totalComAvisos: number;
     totalSuprimidos: number;
     totalReEmissao: number;
@@ -228,10 +228,14 @@ export default function NotasFiscaisPage() {
   // Edicao de valor manual por item (groupKey -> string do input)
   const [valorEdits, setValorEdits] = useState<Record<string, string>>({});
   const [savingOverride, setSavingOverride] = useState<string | null>(null);
-  // Modal de ajustes em lote (lista do Leo)
-  const [batchModalOpen, setBatchModalOpen] = useState(false);
 
   function auditGroupKey(i: AuditItem): string {
+    // SEMPRE prefere o groupKey que o backend mandou (chave canonica usada
+    // nos AppSettings de override/suppress/noDiscount). Antes a UI calculava
+    // paralelo com 'NULL' e o backend usava 'entry_<id>' — overrides em
+    // entries sem contrato eram salvos com chave errada e nao tinham
+    // efeito na hora de emitir. Mantemos fallback so pra compat.
+    if (i.groupKey) return i.groupKey;
     return `${i.contractId || "NULL"}_${i.ano}-${String(i.mes).padStart(2, "0")}_${i.ownerId}`;
   }
 
@@ -1504,6 +1508,32 @@ export default function NotasFiscaisPage() {
 
           {auditReport && (
             <>
+              {/* Banner critico: entries sem contrato vinculado */}
+              {(auditReport.summary.totalSemContrato || 0) > 0 && (
+                <div className="mx-6 mt-4 rounded-md border-2 border-red-300 bg-red-50 p-3 flex items-start gap-3 shrink-0">
+                  <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-red-900">
+                      ⚠️ {auditReport.summary.totalSemContrato} {auditReport.summary.totalSemContrato === 1 ? "entry" : "entries"} sem contrato vinculado
+                    </div>
+                    <div className="text-xs text-red-800 mt-1">
+                      Regra Somma: todo proprietário e coproprietário precisa ter contrato vinculado.
+                      Use o botão <strong>"Vincular contratos"</strong> abaixo (auto-link) ou clique
+                      em <strong>"Vincular"</strong> dentro de cada card pra escolher manualmente.
+                      A emissão está bloqueada até vincular todos.
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1 shrink-0 border-red-400 text-red-700 hover:bg-red-100"
+                    onClick={() => setAuditFilter("bloqueados")}
+                  >
+                    Ver bloqueados
+                  </Button>
+                </div>
+              )}
+
               {/* Summary cards */}
               <div className="px-6 py-4 border-b bg-background">
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -1686,17 +1716,6 @@ export default function NotasFiscaisPage() {
                     ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     : <CheckCircle2 className="h-3.5 w-3.5" />}
                   Vincular contratos
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 text-xs gap-1.5 border-violet-400 text-violet-700 hover:bg-violet-50"
-                  onClick={() => setBatchModalOpen(true)}
-                  disabled={auditLoading}
-                  title="Aplica em lote a lista de ajustes do Leo (sem desconto, valor manual, suprimir)"
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Ajustes do Leo
                 </Button>
               </div>
 
@@ -2127,23 +2146,6 @@ export default function NotasFiscaisPage() {
           )}
         </DialogContent>
       </Dialog>
-
-      {/* Modal: Ajustes em lote (lista pré-populada do Leo) */}
-      <BatchAdjustmentsModal
-        open={batchModalOpen}
-        onClose={() => setBatchModalOpen(false)}
-        month={month}
-        items={(auditReport?.items || []).map((i) => ({
-          ownerId: i.ownerId,
-          ownerName: i.ownerName,
-          contractCode: i.contractCode,
-          contractId: i.contractId,
-          ano: i.ano,
-          mes: i.mes,
-          valorNF: i.valorNF,
-        }))}
-        onAppliedRefresh={preValidarNotas}
-      />
     </div>
   );
 }

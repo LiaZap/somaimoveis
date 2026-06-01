@@ -224,6 +224,20 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
+    // Regra Somma (Mai/2026): TODO entry (proprietario e coproprietario)
+    // PRECISA ter contrato vinculado. Sem contrato a NF sai inconsistente.
+    // Admin vincula pelo modal de Pre-validacao (caixa amarela 'Vincular
+    // contrato' + auto-link).
+    if (!entry.contractId) {
+      results.push({
+        ownerEntryId: entry.id,
+        ownerName: entry.owner.name,
+        success: false,
+        error: "Entry SEM contrato vinculado. Vincule pelo modal de Pre-validacao antes de emitir.",
+      });
+      continue;
+    }
+
     // Calcula a taxa adm em cascata de fallbacks:
     //   0. Override manual (digitado na tela de Pre-validacao)
     //   1. JSON notes do entry (adminFeeValue salvo pelo billing)
