@@ -98,6 +98,24 @@ export async function GET(request: NextRequest) {
     const nfEmitidas: Record<string, { emitida: boolean; numero?: string; data?: string }> =
       nfSetting ? JSON.parse(nfSetting.value) : {};
 
+    // Buscar overrides salvos via /preview-audit (value, suppress, noDiscount)
+    // — mesmo formato de groupKey usado no emit pra que a TELA mostre o valor
+    // que REALMENTE vai sair na NF (antes desse fix a tela mostrava valor
+    // calculado direto e o emit aplicava override -> divergencia confundia
+    // o admin que pensava que a NF ia sair errada).
+    const mm = String(targetMonth + 1).padStart(2, "0");
+    const [valueOvSetting, suppressSetting, noDiscountSetting] = await Promise.all([
+      prisma.appSetting.findUnique({ where: { key: `nf_value_override_${targetYear}_${mm}` } }),
+      prisma.appSetting.findUnique({ where: { key: `nf_suppress_${targetYear}_${mm}` } }),
+      prisma.appSetting.findUnique({ where: { key: `nf_no_discount_${targetYear}_${mm}` } }),
+    ]);
+    const valueOverrides: Record<string, number> =
+      valueOvSetting ? JSON.parse(valueOvSetting.value) : {};
+    const suppressMap: Record<string, true> =
+      suppressSetting ? JSON.parse(suppressSetting.value) : {};
+    const noDiscountMap: Record<string, true> =
+      noDiscountSetting ? JSON.parse(noDiscountSetting.value) : {};
+
     // Buscar provedor das FiscalSettings (singleton). Usado no payload pra
     // UI decidir se botoes de cancelar/re-emitir devem estar habilitados.
     const fiscalSettings = await prisma.fiscalSettings.findFirst({
@@ -170,7 +188,28 @@ export async function GET(request: NextRequest) {
       // Aplicar sharePercent (% deste proprietario no imovel)
       const share = sharePercent / 100;
       const aluguelBruto = Math.round(aluguelLiquidoTotal * share * 100) / 100;
-      const adminFeeValue = Math.round(adminFeeEfetivoTotal * share * 100) / 100;
+      let adminFeeValue = Math.round(adminFeeEfetivoTotal * share * 100) / 100;
+
+      // === Aplica overrides do AppSetting (mesma cascata do emit) ===
+      // groupKey canonico: com contract usa contractId, sem contract usa entry.id.
+      const groupKey = entry.contractId
+        ? `${entry.contractId}_${targetYear}-${mm}_${entry.ownerId}`
+        : `entry_${entry.id}_${targetYear}-${mm}_${entry.ownerId}`;
+      let overrideOrigem: "MANUAL_OVERRIDE" | "NO_DISCOUNT" | null = null;
+      // noDiscount: recalcula sobre aluguelBruto cheio (ignora descontoTotal)
+      if (noDiscountMap[groupKey] === true) {
+        adminFeeValue = Math.round(
+          aluguelBrutoTotal * (adminFeePercent / 100) * share * 100
+        ) / 100;
+        overrideOrigem = "NO_DISCOUNT";
+      }
+      // value override: prioridade maxima
+      const vov = valueOverrides[groupKey];
+      if (typeof vov === "number" && vov > 0) {
+        adminFeeValue = vov;
+        overrideOrigem = "MANUAL_OVERRIDE";
+      }
+      const isSuprimida = suppressMap[groupKey] === true;
 
       const nfStatus = nfEmitidas[entry.id] || { emitida: false };
       const inv = invoiceByEntry.get(entry.id);
@@ -199,7 +238,9 @@ export async function GET(request: NextRequest) {
         descontoAplicado: Math.round(descontoTotal * 100) / 100,
         sharePercent,
         adminFeePercent,
-        adminFeeValue,             // taxa sobre aluguel liquido x % do proprietario
+        adminFeeValue,             // taxa sobre aluguel liquido x % do proprietario (com overrides aplicados)
+        adminFeeOverrideOrigem: overrideOrigem, // 'MANUAL_OVERRIDE' | 'NO_DISCOUNT' | null
+        suprimidaManual: isSuprimida,
         repasseValue: entry.value,
         nfEmitida,
         realmenteEmitida,
