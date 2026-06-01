@@ -53,6 +53,8 @@ interface NotaFiscal {
   sharePercent?: number;
   adminFeePercent: number;
   adminFeeValue: number;
+  adminFeeOverrideOrigem?: "MANUAL_OVERRIDE" | "NO_DISCOUNT" | null;
+  suprimidaManual?: boolean;
   repasseValue: number;
   nfEmitida: boolean;
   realmenteEmitida?: boolean;
@@ -1053,7 +1055,18 @@ export default function NotasFiscaisPage() {
                                 {n.adminFeePercent}%
                               </TableCell>
                               <TableCell className="text-xs text-right font-semibold">
-                                {formatCurrency(n.adminFeeValue)}
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span>{formatCurrency(n.adminFeeValue)}</span>
+                                  {n.adminFeeOverrideOrigem === "MANUAL_OVERRIDE" && (
+                                    <span className="text-[9px] text-emerald-700 font-normal">✏️ manual</span>
+                                  )}
+                                  {n.adminFeeOverrideOrigem === "NO_DISCOUNT" && (
+                                    <span className="text-[9px] text-blue-700 font-normal">↗ sem desconto</span>
+                                  )}
+                                  {n.suprimidaManual && (
+                                    <span className="text-[9px] text-red-700 font-normal">🚫 suprimida</span>
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell>
                                 <Button
@@ -1112,7 +1125,15 @@ export default function NotasFiscaisPage() {
                               {n.rejeicaoMotivo || "Motivo nao informado"}
                             </TableCell>
                             <TableCell className="text-xs text-right font-semibold">
-                              {formatCurrency(n.adminFeeValue)}
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span>{formatCurrency(n.adminFeeValue)}</span>
+                                {n.adminFeeOverrideOrigem === "MANUAL_OVERRIDE" && (
+                                  <span className="text-[9px] text-emerald-700 font-normal">✏️ manual</span>
+                                )}
+                                {n.adminFeeOverrideOrigem === "NO_DISCOUNT" && (
+                                  <span className="text-[9px] text-blue-700 font-normal">↗ sem desconto</span>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1 flex-wrap justify-end">
@@ -1199,7 +1220,15 @@ export default function NotasFiscaisPage() {
                               </div>
                             </TableCell>
                             <TableCell className="text-xs text-right font-semibold">
-                              {formatCurrency(n.adminFeeValue)}
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span>{formatCurrency(n.adminFeeValue)}</span>
+                                {n.adminFeeOverrideOrigem === "MANUAL_OVERRIDE" && (
+                                  <span className="text-[9px] text-emerald-700 font-normal">✏️ manual</span>
+                                )}
+                                {n.adminFeeOverrideOrigem === "NO_DISCOUNT" && (
+                                  <span className="text-[9px] text-blue-700 font-normal">↗ sem desconto</span>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1 justify-end">
@@ -1306,7 +1335,18 @@ export default function NotasFiscaisPage() {
                                 {n.contract?.code || "-"}
                               </TableCell>
                               <TableCell className="text-xs text-right font-semibold">
-                                {formatCurrency(n.adminFeeValue)}
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span>{formatCurrency(n.adminFeeValue)}</span>
+                                  {n.adminFeeOverrideOrigem === "MANUAL_OVERRIDE" && (
+                                    <span className="text-[9px] text-emerald-700 font-normal">✏️ manual</span>
+                                  )}
+                                  {n.adminFeeOverrideOrigem === "NO_DISCOUNT" && (
+                                    <span className="text-[9px] text-blue-700 font-normal">↗ sem desconto</span>
+                                  )}
+                                  {n.suprimidaManual && (
+                                    <span className="text-[9px] text-red-700 font-normal">🚫 suprimida</span>
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell className="text-xs text-muted-foreground">
                                 {n.nfData || "-"}
